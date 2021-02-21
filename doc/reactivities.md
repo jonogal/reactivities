@@ -467,3 +467,277 @@ export default App;
 Se añade la política CORS en la API, concretamente en Startup.cs como un nuevo servicio usado en la configuración de la petición HTTP.
 
 ##### 28 Semantic UI React
+
+https://react.semantic-ui.com/
+
+```bash
+[joan@alkaid client-app]$ npm install semantic-ui-react semantic-ui-css --no-audit
+
+added 16 packages in 5s
+
+126 packages are looking for funding
+  run `npm fund` for details
+```
+
+Se realizan los cambios pertinentes en el componente `App` para utilizar componentes visuales de la librería y obtener una nueva presentación de la lista de actividades.
+
+```tsx
+import React, { useEffect, useState } from 'react';
+import './App.css';
+import axios from 'axios';
+import { Header, List } from 'semantic-ui-react';
+
+function App() {
+  const [activities, setActivities] = useState([]);
+
+  useEffect(() => {
+    axios.get('http://localhost:5000/api/activities').then(response => {
+      console.log(response);
+      setActivities(response.data);
+    })
+  }, []);
+
+  return (
+    <div>
+      <Header as='h2' icon='users' content='Reactivities' />
+      <List>
+      {activities.map((activity: any) => (
+            <List.Item key={activity.id}>
+              {activity.title}
+            </List.Item>
+          ))}
+      </List>
+    </div>
+  );
+}
+
+export default App;
+```
+
+git stage + commit  (End of section 3) + push
+
+##### 29 Sumario de la sección 3
+
+#### Sección 4: Crear una aplicación CRUD utilizando CQRS + el patrón Mediator
+
+##### 30 Introducción
+
+> [joan@alkaid client-app]$ npx npm-check-updates -u
+> Upgrading /home/joan/e-learning/udemy/reactivities/client-app/package.json
+> [====================] 15/15 100%
+>
+> All dependencies match the latest package versions :)
+> [joan@alkaid client-app]$ npm outdated
+> Package      Current    Wanted    Latest  Location                  Depended by
+> @types/node  12.20.4  14.14.31  14.14.31  node_modules/@types/node  client-app
+
+##### 31 Arquitectura Limpia
+
+https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/31.1.png)
+
+##### 32 CQRS
+
+Command Query Responsability Separation
+
+##### 34 Crear nuestro primer manipulador de Consulta
+
+Hay que instalar el paquete `MediatR.Extensions.Microsoft.DependencyInyection` en el proyecto `Application`.
+
+Se crea la nueva clase `List` en el apartado `Activities` de características de la aplicación. La lógica se mueve al proyecto `Application`.
+
+```c#
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Domain;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class List
+    {
+        public class Query : IRequest<List<Activity>> { }
+
+        public class Handler : IRequestHandler<Query, List<Activity>>
+        {
+            private readonly DataContext _context;
+            public Handler(DataContext context)
+            {
+                _context = context;
+            }
+
+            public async Task<List<Activity>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                return await _context.Activities.ToListAsync();
+            }
+        }
+    }
+}
+```
+
+Hay que rehacer el controlador de actividades. En lugar de inyectar el `DataContext` es necesario establecer `MediatR` como un servicio en `Startup` e inyectarlo en el controlador.
+
+```c#
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Application.Activities;
+using Domain;
+using MediatR;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class ActivitiesController : BaseApiController
+    {
+        private readonly IMediator _mediator;
+        public ActivitiesController(IMediator mediator)
+        {
+            this._mediator = mediator;
+        }
+
+        [HttpGet]
+        public async Task<ActionResult<List<Activity>>> GetActivities()
+        {
+            return await _mediator.Send(new List.Query());
+        }
+
+        [HttpGet("{id}")]
+        public async Task<ActionResult<Activity>> GetActivity(Guid id)
+        {
+            return Ok();
+        }
+    }
+}
+```
+
+##### 34 Controladores ligeros en la API
+
+El servicio`MediatR` se hace accesible en la clase base del controlador mediante el atributo protegido `Mediator`.
+
+```c#
+using MediatR;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace API.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class BaseApiController : ControllerBase
+    {
+        private IMediator _mediator;
+
+        protected IMediator Mediator => _mediator ??= HttpContext.RequestServices
+            .GetService<IMediator>();
+    }
+}
+```
+
+##### 35 Añadir un manipulador de Detalles
+
+`Application.Activities.Details`
+
+##### 36 Añadir un manipulador de Crear
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Domain;
+using MediatR;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class Create
+    {
+        public class Command : IRequest
+        {
+            public Activity Activity { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Command>
+        {
+            private readonly DataContext _context;
+            public Handler(DataContext context)
+            {
+                _context = context;
+            }
+
+            public async Task<Unit> Handle(Command request, CancellationToken cancellationToken)
+            {
+                _context.Activities.Add(request.Activity);
+
+                await _context.SaveChangesAsync();
+
+                return Unit.Value;
+            }
+        }
+    }
+}
+```
+
+##### 37 Añadir un manipulador de Editar
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Domain;
+using MediatR;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class Edit
+    {
+        public class Command : IRequest
+        {
+            public Activity Activity { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Command>
+        {
+            private readonly DataContext _context;
+            public Handler(DataContext context)
+            {
+                _context = context;
+            }
+
+            public async Task<Unit> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var activity = await _context.Activities.FindAsync(request.Activity.Id);
+
+                activity.Title = request.Activity.Title ?? activity.Title;
+                // resto de atributos de la actividad...
+
+                await _context.SaveChangesAsync();
+
+                return Unit.Value;
+            }
+        }        
+    }
+}
+```
+
+##### 38 Añadir `AutoMapper`
+
+Se instala el paquete `AutoMapper.Extensions.Microsoft.DependencyInyection` en el proyecto `Application`. Utilizar AutoMapper simplifica la tarea de copiar los atributos de un objeto a otro, como ocurre en el manipulador de Editar.
+
+##### 39 Añadir un manipulador de Borrar
+
+Se resalta que hasta se ha desarrollado el camino feliz, sin control de errores. Por ejemplo al usar un Id que no existe al borrar o editar una actividad.
+
+##### 40 Limpieza de la clase `Startup`
+
+El objetivo es crear una extensión de `IServiceCollection` y mover parte del código de `Startup`.
+
+##### 41 `Tokens` de cancelación
+
+Se hace una prueba para explicar cómo se puede usar `CancellationToken` para interrumpir la ejecución de un `endpoint` de la API.
+
+##### 42 Usar el depurador de VS Code
+
