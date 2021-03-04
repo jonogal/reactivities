@@ -741,3 +741,254 @@ Se hace una prueba para explicar cómo se puede usar `CancellationToken` para in
 
 ##### 42 Usar el depurador de VS Code
 
+##### 43 Sumario de la sección 4
+
+#### Sección 5: Crear una aplicación CRUD en React
+
+##### 44 Introducción
+
+* Estructura de carpetas
+* Interfaces TypeScript
+* Componentes SemanticUI
+* Formularios básicos en React
+* Operaciones CRUD
+
+##### 45 Estructura de carpetas
+
+https://reactjs.org/docs/faq-structure.html
+
+Se opta por usar la organización por características.
+
+##### 46 Añadir una interfaz de Actividad
+
+http://localhost:5000/swagger/index.html
+
+Se copia el objecto actividad de `/api/Activities`:
+
+```json
+  {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "title": "string",
+    "date": "2021-02-23T20:28:37.026Z",
+    "description": "string",
+    "category": "string",
+    "city": "string",
+    "venue": "string"
+  }
+```
+
+y se lleva a http://www.jsontots.com/ para generar una interfaz
+
+```tsx
+interface RootObject {
+  id: string;
+  title: string;
+  date: string;
+  description: string;
+  category: string;
+  city: string;
+  venue: string;
+}
+```
+
+ahora podemos tipificar la lista de actividades y la actividad individual en `App.tsx`:
+
+```tsx
+const [activities, setActivities] = useState<Activity[]>([]);
+```
+
+También nos beneficiamos de Intellisense al escribir el código.
+
+##### 47 Añadir una barra de navegación
+
+Usaremos el componente `Menu` de las `Collections` de Semantic UI.
+
+src/app/layout/NavBar.tsx
+
+```tsx
+import React from 'react';
+import { Button, Container, Menu } from 'semantic-ui-react';
+
+export default function NavBar() {
+    return (
+        <Menu inverted fixed='top'>
+            <Container>
+                <Menu.Item header>
+                    <img src="/assets/logo.png" alt="logo" />
+                    Reactivities
+                </Menu.Item>
+                <Menu.Item name='Activities' />
+                <Menu.Item>
+                    <Button positive content='Create Activity' />
+                </Menu.Item>
+            </Container>
+        </Menu>
+    )
+}
+```
+
+##### 48 Añadir algo de estilo a la barra de navegación
+
+##### 49 Crear el panel de control de actividades
+
+La lista de actividades pasa del componente `App` al `ActivityDashboard`, inicialmente sin variar el modo de presentación aunque en un contenedor de tipo `Grid` de 10 columnas (de las 16 que maneja Semantic UI). Las variables de estado se pasan a los componentes descendientes mediante propiedades.
+
+##### 50 Crear una lista de actividades
+
+Mostrando más atributos para cada una de las actividades. Se crea un componente `ActivityList` que se usa en `ActivityDashboard`.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/50.1.png)
+
+##### 51 Crear una vista de detalles
+
+Se usa un `Card` para mostrar el detalle de la actividad seleccionada, al que de momento se le pasa como propiedad la primera actividad.
+
+El panel de control de actividades queda formado por 2 columnas. Es importante destacar la necesidad de asegurar la existencia de la actividad en el momento de mostrar el detalle.
+
+```tsx
+import Rect from 'react';
+import { Grid } from 'semantic-ui-react';
+import { Activity } from '../../../app/models/activity';
+import ActivityDetails from '../details/ActivityDetails';
+import ActivityList from './ActivityList';
+
+interface Props {
+    activities: Activity[];
+}
+
+export default function ActivityDashboard({ activities }: Props) {
+    return (
+        <Grid>
+            <Grid.Column width='10'>
+                <ActivityList activities={activities} />
+            </Grid.Column>
+            <Grid.Column width='6'>
+                {activities[0] &&
+                    <ActivityDetails activity={activities[0]} />}
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+##### 52 Crear un formulario de actividad
+
+Para editar o crear una actividad.
+
+Se añade un formulario sin funcionalidad en el panel de control de actividades, debajo del detalle de la actividad seleccionada.
+
+##### 53 Seleccionar una actividad para consultarla
+
+Al pulsar el botón `View` actualizar los detalles de la actividad seleccionada.
+
+Se crea una variable de estado en `App` que representa la actividad seleccionada, inicialmente `undefined`.
+
+```tsx
+const [selectedActivity, setSelectedActivity] = useState<Activity | undefined>(undefined)
+```
+
+Se crean 2 funciones para manipular la selección de una actividad, que se pasarán a través del panel de control a los componentes donde se requiera.
+
+##### 54 Mostrar el formulario de crear/editar
+
+Para controlar si se está editando o no una actividad necesitamos una nueva variable de estado.
+
+```tsx
+const [editMode, setEditMode] = useState(false);
+```
+
+Se infiere automáticamente el tipo de la variable por su valor inicial falso.
+
+Se añaden 2 funciones para  abrir y cerra el formulario. Se establece el mecanismo para no mostrar el detalle si se está en modo edición.
+
+##### 55 Editar una actividad y uso básico de formularios en React
+
+Hasta ahora sólo hemos dado estilo al formulario de edición construido. Lo que se escribe en los campos de entrada únicamente actualiza el DOM, no React. Tenemos que hacer que React manipule el estado del formulario,
+
+Se trabaja sobre el componente `ActivityForm`.
+
+```tsx
+import React, { ChangeEvent, useState } from 'react';
+import { Button, Form, Segment } from 'semantic-ui-react';
+import { Activity } from '../../../app/models/activity';
+
+interface Props {
+    activity: Activity | undefined;
+    closeForm: () => void;
+}
+
+export default function ActivityForm({activity: selectedActivity, closeForm}: Props) {
+
+    const initialState = selectedActivity ?? {
+        id: '',
+        title: '',
+        category: '',
+        description: '',
+        date: '',
+        city: '',
+        venue: ''
+    }
+
+    const [activity, setActivity] = useState(initialState);
+
+    function handleSubmit() {
+        console.log(activity);
+    }
+
+    function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
+        const {name, value} = event.target;
+        setActivity({...activity, [name]: value});
+    }
+    
+    return (
+        <Segment clearing>
+            <Form onSubmit={handleSubmit} autoComplete='off'>
+                <Form.Input placeholder='Title' value={activity.title} name='title' onChange={handleInputChange} />
+                <Form.TextArea placeholder='Description' />
+                <Form.Input placeholder='Category' />
+                <Form.Input placeholder='Date' />
+                <Form.Input placeholder='City' />
+                <Form.Input placeholder='Venue' />
+                <Button floated='right' positive type='submit' content='Submit' />
+                <Button onClick={closeForm} floated='right' type='button' content='Cancel' />
+            </Form>
+        </Segment>
+    )
+}
+```
+
+En la consola se pueden ver los cambios en el campo Título.
+
+##### 56 Manipular el envío para crear o editar
+
+Realmente no se puede crear una actividad porque no tenemos `id`.
+
+```tsx
+function handleCreateOrEditActivity(activity: Activity) {
+  activity.id
+    ? setActivities([...activities.filter(x => x.id !== activity.id), activity])
+    : setActivities([...activities, activity]);
+  setEditMode(false);
+  setSelectedActivity(activity);
+}
+```
+
+##### 57 Usar un GUID para el id de la actividad
+
+```bash
+[joan@alkaid client-app]$ npm install uuid
+changed 1 package, and audited 1987 packages in 3s
+...
+[joan@alkaid client-app]$ npm i --save-dev @types/uuid
+```
+
+```tsx
+function handleCreateOrEditActivity(activity: Activity) {
+  activity.id
+    ? setActivities([...activities.filter(x => x.id !== activity.id), activity])
+    : setActivities([...activities, {...activity, id: uuid()}]);
+  setEditMode(false);
+  setSelectedActivity(activity);
+}
+```
+
