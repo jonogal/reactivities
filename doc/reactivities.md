@@ -992,3 +992,67 @@ function handleCreateOrEditActivity(activity: Activity) {
 }
 ```
 
+##### 58 Borrar una actividad
+
+##### 59 Sumario de la sección 5
+
+#### Sección 6: Axios
+
+##### 60 Introducción
+
+* Configurar Axios
+* Usar tipos genéricos
+* Usar interceptores Axios
+* Conectar todas nuestras solicitudes a la API
+
+##### 61 Configurar Axios
+
+Hasta ahora usamos Axios en el componente `App`:
+
+```tsx
+useEffect(() => {
+  axios.get<Activity[]>('http://localhost:5000/api/activities').then(response => {
+    setActivities(response.data);
+  })
+}, []);
+```
+
+Se van a centralizar las llamadas a axios en `agent.ts`.
+
+##### 62 Tipos Axios
+
+Se adapta `agent.ts` para hacer uso de tipos en las llamadas a axios y por ejemplo obtener una lista de actividades (`Promise`) al llamar a `agent.Activities.list()`.
+
+Para presentar las fechas, que están en formato ISO, se les elimina la parte de tiempo. Se muestra año, mes y día salvo en el formulario, en el que al campo de entrada de la fecha se le ha asignado un `type='date'`. 
+
+##### 63 Añadir indicadores de cargando
+
+Se añade un retardo forzado de 1 segundo a las llamadas a la API.
+
+```js
+axios.interceptors.response.use(response => {
+    return sleep(1000).then(() => {
+        return response;
+    }).catch((error) => {
+        console.log(error);
+        return Promise.reject(error);
+    })
+})
+```
+
+Se convierte a `async`, como se sugiere en el código.
+
+```js
+axios.interceptors.response.use(async response => {
+    try {
+        await sleep(1000);
+        return response;
+    } catch (error) {
+        console.log(error);
+        return await Promise.reject(error);
+    }
+})
+```
+
+##### 64 Mandar datos al servidor
+
