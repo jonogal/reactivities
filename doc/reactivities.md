@@ -1,3 +1,5 @@
+
+
 #### Sección 2: Esqueleto caminante Parte 1 - API
 
 ##### 9 Crear una entidad de dominio
@@ -1055,4 +1057,150 @@ axios.interceptors.response.use(async response => {
 ```
 
 ##### 64 Mandar datos al servidor
+
+##### 65 Borrar una actividad del servidor
+
+El problema es que todos los botones de la lista entran en modo enviar. Hay que identificar qué botón se ve afectado por la operación.
+
+##### 66 Sumario de la sección 6
+
+#### Sección 7: MobX
+
+##### 67 Introducción
+
+* Introducción a la Gestión de Estado
+* MobX
+* MobX React Lite
+* Contexto React
+
+Se va a aligerar el componente App que en este momento mantiene el estado de la aplicación.
+
+##### 68 Qué es MobX
+
+Por qué MobX?
+
+* Está escrito en typescript
+* Es más simple que Redux
+
+Funciones del núcleo de MobX
+
+* Observables
+* Actions
+* Computed properties
+* Reactions
+* AutoRun
+
+> **Observer pattern**
+>
+> *From Wikipedia, the free encyclopedia*
+>
+> The observer pattern is a software design pattern in which an object, named the subject, maintains a list of its dependents, called observers, and notifies them automatically of any state changes, usually by calling one of their methods.
+>
+> It is mainly used for implementing distributed event handling systems, in "event driven" software.
+
+[MobX Getting started](https://mobx.js.org/getting-started)
+
+![La idea central](/home/joan/e-learning/udemy/reactivities/doc/images/69.1.png)
+
+En primer lugar, está el **estado** de la aplicación. Gráficos de objetos, matrices, primitivas, referencias que forman el modelo de su aplicación. Estos valores son las "celdas de datos" de su aplicación.
+
+En segundo lugar, hay **derivaciones**. Básicamente, cualquier valor que se pueda calcular automáticamente a partir del estado de su aplicación. Estas derivaciones, o valores calculados, pueden variar desde valores simples, como el número de tareas pendientes sin terminar (*ToDo's*), hasta cosas complejas como una representación HTML visual de las tareas pendientes (*ToDo's*). En términos de hoja de cálculo: son las fórmulas y gráficos de su aplicación.
+
+Las **reacciones** son muy similares a las derivaciones. La principal diferencia es que estas funciones no producen un valor. En cambio, se ejecutan automáticamente para realizar alguna tarea. Por lo general, esto está relacionado con la E/S. Aseguran que el DOM esté actualizado o de que las solicitudes de red se realicen automáticamente en el momento adecuado.
+
+Finalmente hay **acciones**. Las acciones son todas las cosas que alteran el estado. MobX se asegurará de que todos los cambios en el estado de la aplicación causados por sus acciones sean procesados automáticamente por todas las derivaciones y reacciones. De forma sincronizada y sin fallos.
+
+##### 69 Configurar MobX
+
+```bash
+[joan@alkaid client-app]$ npm install mobx mobx-react-lite
+[joan@alkaid client-app]$ npm list mobx
+client-app@0.1.0 /home/joan/e-learning/udemy/reactivities/client-app
+├─┬ mobx-react-lite@3.2.0
+│ └── mobx@6.1.8 deduped
+└── mobx@6.1.8
+```
+`src/app/stores/activityStore.ts`
+
+```tsx
+import { makeObservable, observable } from "mobx";
+
+export default class ActivityStore {
+    title = 'Hello from Mobx';
+
+    constructor() {
+        makeObservable(this, {
+            title: observable
+        })
+    }
+}
+```
+`src/app/stores/store.ts`
+
+```tsx
+import { createContext, useContext } from "react";
+import ActivityStore from "./activityStore";
+
+interface Store {
+    activityStore: ActivityStore
+}
+
+export const store: Store = {
+    activityStore: new ActivityStore()
+}
+
+export const StoreContext = createContext(store);
+
+// se crea un react hook para acceder al contexto de los almacenes
+// (de momento uno)
+export function useStore() {
+    return useContext(StoreContext);
+}
+```
+
+Para dar acceso al contexto al componente `App`:
+
+```tsx
+ReactDOM.render(
+  <StoreContext.Provider value={store}>
+    <App />
+  </StoreContext.Provider>,
+  document.getElementById('root')
+);
+```
+
+Se usa el almacén `activityStore` para mostrar el `title` sobre la lista de actividades.
+
+##### 70 Acciones MobX
+
+Se va a mostrar cómo observar la propiedad `title` desde uno de los componentes react.
+
+Para enlazar `bind` una función a una clase, como un método, se puede usar `action.bound` o declararla como una función de flecha `arrow function`.
+
+```tsx
+<NavBar openForm={handleFormOpen} />
+<Container style={{ marginTop: '7em' }}>
+  <h2>{activityStore.title}</h2>
+  <Button content='Add exclamation!' positive onClick={activityStore.setTitle} />
+```
+
+Para que el botón funcione hay que declarar el componente `App` como **observador** `observer`.
+
+##### 71 Rehacer la aplicación para usar MobX
+
+Después de mover la lógica de cargar la lista de actividades al almacén activityStore y comprobar que la aplicación funciona tal como lo hacía antes, vemos un problema en la consola.
+
+```
+[MobX] Since strict-mode is enabled, changing (observed) observable values without using an action is not allowed. Tried to modify: ActivityStore@1.loadingInitial react_devtools_backend.js:2430:23
+```
+
+##### 72 Modo estricto de MobX
+
+Se puede solventar el error anterior usando `runInAction`, que admite una función. También se solventa definiendo una función que modifique el valor de `loadingInitial`.
+
+##### 73 Seleccionar una actividad
+
+##### 74 Crear una actividad usando MobX
+
+##### 75 Eliminar una actividad usando MobX
 
