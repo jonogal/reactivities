@@ -1204,3 +1204,155 @@ Se puede solventar el error anterior usando `runInAction`, que admite una funci�
 
 ##### 75 Eliminar una actividad usando MobX
 
+##### 76 Usar un objeto map de Javascript para almacenar las actividades
+
+> En este punto la aplicación está refactorizada para utilizar MobX.
+
+Tiene muchas más ventajas que utilizar un `array` de actividades, como hasta ahora.  Una vez que el estado se maneja completamente desde el almacén de actividades, el cambio se simplifica.
+
+##### 77 Sumario de la sección 7
+
+#### Sección 8: Encaminamiento
+
+##### 78 Introducción
+
+* Por qué necesitamos un encaminador?
+* React-Router
+* API de React Router
+* Historial
+
+Las SPA necesitan routers. Sólo tenemos una página (index.html) y los cambios son entre componentes.
+
+##### 79 Instalar React Router
+
+[React Router](https://reactrouter.com/)
+
+```bash
+[joan@alkaid client-app]$ npm install react-router-dom
+[joan@alkaid client-app]$ npm install @types/react-router-dom --save-dev
+[joan@alkaid client-app]$ npm list react-router
+client-app@0.1.0 /home/joan/e-learning/udemy/reactivities/client-app
+└─┬ react-router-dom@5.2.0
+  └── react-router@5.2.0
+[joan@alkaid client-app]$ npm list @types/react-router
+client-app@0.1.0 /home/joan/e-learning/udemy/reactivities/client-app
+└─┬ @types/react-router-dom@5.1.7
+  └── @types/react-router@5.1.12
+```
+
+`index.tsx`
+
+```tsx
+ReactDOM.render(
+  <StoreContext.Provider value={store}>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </StoreContext.Provider>,
+  document.getElementById('root')
+);
+```
+
+##### 80 Añadir rutas
+
+Se crea un componente `HomePage` que sustituye a `ActivityDashboard` en `App`.
+
+```tsx
+import React from 'react';
+import { Container } from 'semantic-ui-react';
+import NavBar from './NavBar';
+import ActivityDashboard from '../../features/activities/dashboard/ActivityDashboard';
+import { observer } from 'mobx-react-lite';
+import { Route } from 'react-router';
+import HomePage from '../../features/home/HomePage';
+import ActivityForm from '../../features/activities/form/ActivityForm';
+
+function App() {
+  // </> equival a emprar <Fragment/>
+  return (
+    <>
+      <NavBar />
+      <Container style={{ marginTop: '7em' }}>
+        <Route exact path='/' component={HomePage} />
+        <Route path='/activities' component={ActivityDashboard} />
+        <Route path='/createActivity' component={ActivityForm} />
+      </Container>
+    </>
+  );
+}
+
+export default observer(App);
+```
+
+##### 81 Añadir enlaces de navegación
+
+```tsx
+import React from 'react';
+import { NavLink } from 'react-router-dom';
+import { Button, Container, Menu } from 'semantic-ui-react';
+import { useStore } from '../stores/store';
+
+export default function NavBar() {
+    const { activityStore } = useStore();
+    return (
+        <Menu inverted fixed='top'>
+            <Container>
+                <Menu.Item as={NavLink} to='/' exact header>
+                    <img src="/assets/logo.png" alt="logo" style={{ marginRight: '10px' }} />
+                    Reactivities
+                </Menu.Item>
+                <Menu.Item as={NavLink} to='/activities' name='Activities' />
+                <Menu.Item>
+                    <Button as={NavLink} to='/createActivity' positive content='Create Activity' />
+                </Menu.Item>
+            </Container>
+        </Menu>
+    )
+}
+```
+
+##### 82 Añadir un enlace a detalles
+
+Se cambia el `onClick` del `Button` View a un `Link`, pasando el id de la actividad en la ruta.
+
+```tsx
+<Button as={Link} to={`/activities/${activity.id}`} floated='right' content='View' color='blue' />
+```
+
+##### 83 Obtener una actividad individual
+
+Hasta ahora se mostraba el detalle de una actividad a partir de los datos en memoria de la lista de actividades. Al usar una ruta tenemos el id de la actividad en el URL
+
+http://localhost:3000/activities/ba1347b9-baff-40ca-b7db-df4557c749ae
+
+y pulsar el botón View tiene que equivaler a refrescar la página en el navegador. Es necesario usar la API.
+
+Se eliminan los métodos:
+
+* selectActivity
+* cancelSelectedActivity
+* openForm
+* closeForm
+
+##### 84 Usar parámetros de ruta
+
+Es necesario un método `loadActivity` en `activityStore` que determine si utilizan las actividades en memoria o va a buscar la actividad mediante la API.
+
+En el detalle `activityDetails` se usan los hook `useParams` y `useEffect` para obtener el id y buscarla la actividad en el almacén respectivamente.
+
+> `useParams` returns an object of key/value pairs of URL parameters. Use it to access `match.params` of the current `<Route>`.
+
+https://reactrouter.com/web/api/Hooks/useparams
+
+##### 85 Añadir una ruta para editar una actividad
+
+Se incluye en la ruta del componente `ActivityForm`, en `App`.
+
+```tsx
+<Route path={['/createActivity', '/manage/:id']} component={ActivityForm} />
+```
+
+Se modifican los botones de `ActivityDetails` convirtiéndolos en un enlace.
+
+
+
