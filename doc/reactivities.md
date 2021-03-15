@@ -1354,5 +1354,284 @@ Se incluye en la ruta del componente `ActivityForm`, en `App`.
 
 Se modifican los botones de `ActivityDetails` convirtiéndolos en un enlace.
 
+##### 86 Añadir una clave  la ruta
 
+Existe un problema cuando se pasa de editar una actividad a crear una nueva. El formulario no reacciona, no se limpia el contenido de los campos como realmente se espera. El componente pasa de recibir el `id` en una propiedad a no recibir nada.
 
+Se opta por utilizar un componente completamente incontrolado con una clave, *a fully uncontrolled component with a key*. Se pretende que el componente se reinicie.
+
+Se modifica el componente `App` para añadir una clave a la ruta que activa el formulario. 
+
+##### 87 Redireccionar después de enviar el formulario
+
+##### 88 Mover la página de inicio fuera de la barra de navegación 
+
+##### 89 Limpiar código no utilizado
+
+Se cargarán las actividades una única vez, al cargar el componente `ActivityDashboard`.
+
+Se incluye un enlace en el botón cancelar del formulario. Es necesario un ajuste al punto anterior para evitar un efecto no deseado al refrescar la página en el momento de edición. Queda 1 solo elemento en la lista de actividades.
+
+```tsx
+if (activityRegistry.size <= 1) loadActivities();
+```
+
+##### 90 Sumario de la sección 8
+
+#### Sección 9: Estilizar la interfaz de usuario
+
+##### 91 Introducción
+
+##### 92 Estilizar la lista de actividades
+
+Se crea un nuevo componente `ActivityListItem`. Inicialmente la vista queda exactamente igual.
+
+##### 93 Agrupar las actividades por fecha
+
+Se usa la función `reduce` de un `Array`. A partir de la función `activitiesByDate` de `activityStore` se va a obtener un objeto con claves por fecha y a cada clave se le asociará una lista de actividades. Se crea una nueva función `groupedActivities`. Muy interesante:
+
+```tsx
+get groupedActivities() {
+    return Object.entries(
+        this.activitiesByDate.reduce((activities, activity) => {
+            const date = activity.date;
+            activities[date] = activities[date] ? [...activities[date], activity] : [activity];
+            return activities;
+        }, {} as {[key: string]: Activity[]})
+    )
+}
+```
+
+ Ahora se transforma `ActivityList` para usar las actividades agrupadas por fecha.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/94.1.png)
+
+##### 94 Estilizar los elementos de la lista
+
+Se cambia completamente la definición del `ActivityListItem`.
+
+```tsx
+import React, { SyntheticEvent, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Button, Item, Label } from 'semantic-ui-react';
+import { Activity } from '../../../app/models/activity';
+import { useStore } from '../../../app/stores/store';
+
+interface Props {
+    activity: Activity
+}
+
+export default function ActivityListItem({ activity }: Props) {
+    const [target, setTarget] = useState('');
+
+    const { activityStore } = useStore();
+    const { deleteActivity, activitiesByDate, loading } = activityStore;
+
+    function handleActivityDelete(e: SyntheticEvent<HTMLButtonElement>, id: string) {
+        setTarget(e.currentTarget.name);
+        deleteActivity(id);
+    }
+
+    return (
+        <Item key={activity.id}>
+            <Item.Content>
+                <Item.Header as='a'>{activity.title}</Item.Header>
+                <Item.Meta>{activity.date}</Item.Meta>
+                <Item.Description>
+                    <div>{activity.description}</div>
+                    <div>{activity.city}, {activity.venue}</div>
+                </Item.Description>
+                <Item.Extra>
+                    <Button as={Link} to={`/activities/${activity.id}`} floated='right' content='View' color='blue' />
+                    <Button
+                        name={activity.id}
+                        loading={loading && target === activity.id}
+                        onClick={(e) => { handleActivityDelete(e, activity.id) }}
+                        floated='right'
+                        content='Delete'
+                        color='red'
+                    />
+                    <Label basic content={activity.category} />
+                </Item.Extra>
+            </Item.Content>
+        </Item>
+    );
+}
+```
+
+```tsx
+import React, { SyntheticEvent, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Button, Icon, Item, Label, Segment } from 'semantic-ui-react';
+import { Activity } from '../../../app/models/activity';
+import { useStore } from '../../../app/stores/store';
+
+interface Props {
+    activity: Activity
+}
+
+export default function ActivityListItem({ activity }: Props) {
+    const [target, setTarget] = useState('');
+
+    const { activityStore } = useStore();
+    const { deleteActivity, activitiesByDate, loading } = activityStore;
+
+    function handleActivityDelete(e: SyntheticEvent<HTMLButtonElement>, id: string) {
+        setTarget(e.currentTarget.name);
+        deleteActivity(id);
+    }
+
+    return (
+        <Segment.Group>
+            <Segment>
+                <Item.Group>
+                    <Item>
+                        <Item.Image size='tiny' circular src='/assets/user.png' />
+                        <Item.Content>
+                            <Item.Header as={Link} to={`/activities/${activity.id}`}>
+                                {activity.title}
+                            </Item.Header>
+                            <Item.Description>Hosted by Bob</Item.Description>
+                        </Item.Content>
+                    </Item>
+                </Item.Group>
+            </Segment>
+            <Segment>
+                <span>
+                    <Icon name='clock' /> {activity.date}
+                    <Icon name='marker' /> {activity.venue}
+                </span>
+            </Segment>
+            <Segment>
+                Attendees go here
+            </Segment>
+            <Segment clearing>
+                <span>{activity.description}</span>
+                <Button
+                    as={Link}
+                    to={`/activities/${activity.id}`}
+                    color='teal'
+                    floated='right'
+                    content='View'
+                />
+            </Segment>
+        </Segment.Group>
+    );
+}
+```
+
+##### 95 Página de detalles de una actividad
+
+Se divide el componente de detalles de actividad en 4:
+
+* `ActivityDetailedHeader`,
+* `ActivityDetailedInfo`,
+* `ActivityDetailedChat` y
+* `ActivityDetailedSidebar`.
+
+Se cambia por completo el componente `ActivityDetails`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useEffect } from 'react';
+import { useParams } from 'react-router';
+import { Link } from 'react-router-dom';
+import { Button, Card, Image } from 'semantic-ui-react';
+import LoadingComponent from '../../../app/layout/LoadingComponent';
+import { useStore } from '../../../app/stores/store';
+
+export default observer(function ActivityDetails() {
+    const { activityStore } = useStore();
+    const { selectedActivity: activity, loadActivity, loadingInitial } = activityStore;
+    const { id } = useParams<{ id: string }>()
+
+    useEffect(() => {
+        if (id) loadActivity(id);
+    }, [id, loadActivity])
+
+    if (loadingInitial || !activity) return <LoadingComponent />;
+
+    return (
+        <Card fluid>
+            <Image src={`/assets/categoryImages/${activity.category}.jpg`} />
+            <Card.Content>
+                <Card.Header>{activity.title}</Card.Header>
+                <Card.Meta>
+                    <span>{activity.date}</span>
+                </Card.Meta>
+                <Card.Description>
+                    {activity.description}
+                </Card.Description>
+            </Card.Content>
+            <Card.Content extra>
+                <Button.Group widths='2'>
+                    <Button as={Link} to={`/manage/${activity.id}`} basic color='blue' content='Edit' />
+                    <Button as={Link} to='/activities' basic color='grey' content='Cancel' />
+                </Button.Group>
+            </Card.Content>
+        </Card>
+    )
+})
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useEffect } from 'react';
+import { useParams } from 'react-router';
+import { Link } from 'react-router-dom';
+import { Button, Card, Grid, GridColumn, Image } from 'semantic-ui-react';
+import LoadingComponent from '../../../app/layout/LoadingComponent';
+import { useStore } from '../../../app/stores/store';
+import ActivityDetailedChat from './ActivityDetailedChat';
+import ActivityDetailedHeader from './ActivityDetailedHeader';
+import ActivityDetailedSidebar from './ActivityDetailedInfo';
+import ActivityDetailedInfo from './ActivityDetailedSidebar';
+
+export default observer(function ActivityDetails() {
+    const { activityStore } = useStore();
+    const { selectedActivity: activity, loadActivity, loadingInitial } = activityStore;
+    const { id } = useParams<{ id: string }>()
+
+    useEffect(() => {
+        if (id) loadActivity(id);
+    }, [id, loadActivity])
+
+    if (loadingInitial || !activity) return <LoadingComponent />;
+
+    return (
+        <Grid>
+            <GridColumn width={10}>
+                <ActivityDetailedHeader />
+                <ActivityDetailedInfo />
+                <ActivityDetailedChat />
+            </GridColumn>
+            <Grid.Column width={6}>
+                <ActivityDetailedSidebar />
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+##### 96 Completar los componentes detallados
+
+Se copian de la carpeta de *snippets* directamente.
+
+##### 97 Añadir el componente de filtro de actividad
+
+```bash
+[joan@alkaid client-app]$ npm install react-calendar
+[joan@alkaid client-app]$ npm install @type/react-calendar
+```
+
+Hay que añadir los estilos del calendario en `index.tsx`.
+
+Aparte se usarán estilos propios de la aplicación.
+
+Se copia `box-shadow` de `.ui.vertical.menu`
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/97.1.png)
+
+##### 98 Estilizando la página de inicio
+
+El estilo también se copia de un *snippet*.
