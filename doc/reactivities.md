@@ -1,5 +1,3 @@
-
-
 #### Sección 2: Esqueleto caminante Parte 1 - API
 
 ##### 9 Crear una entidad de dominio
@@ -1635,3 +1633,707 @@ Se copia `box-shadow` de `.ui.vertical.menu`
 ##### 98 Estilizando la página de inicio
 
 El estilo también se copia de un *snippet*.
+
+##### 99 Sumario de la sección 9
+
+#### Sección 10: Manejo de errores
+
+##### 100 Introducción
+
+* Validación
+* Manejar Respuestas HTTP de Error
+* Manejar Excepciones
+* *Middleware* personalizado
+* Usar interceptores Axios
+
+Hay que tener en cuenta la arquitectura Limpia de la aplicación para el manejo de errores.
+
+##### 101 Validación con anotaciones de datos
+
+Comenzamos con postman (módulo 10), operación *Create Empty Activity*. Cuando se envía la petición a la API la respuesta es un 200 http con un objeto vacío. Efectivamente se crea una actividad nula.
+
+```json
+{
+    "id": "4804eacb-b64d-48df-8dd3-71f2aa312893",
+    "title": null,
+    "date": "0001-01-01T00:00:00",
+    "description": null,
+    "category": null,
+    "city": null,
+    "venue": null
+}
+```
+
+Una forma de realizar las validaciones en el servidor es usar anotaciones de datos en `Domain`. En la definición de `Activity` se añade la anotación `[Required]` al atributo `Title`. Sólo con esta acción la respuesta de crear una actividad vacía es un 400 *Bad Request* con el texto de error correspondiente.
+
+```json
+{
+    "type": "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+    "title": "One or more validation errors occurred.",
+    "status": 400,
+    "traceId": "00-0a6bed3491fea74881a624ed823f7475-af6c9a89c3f8a04c-00",
+    "errors": {
+        "Title": [
+            "The Title field is required."
+        ]
+    }
+}
+```
+
+Sin embargo no parece un lugar adecuado para incluir las validaciones en la aplicación, no en la capa de `Domain`. **Se descarta esta opción.**
+
+##### 102 Validación fluida
+
+En la galería de NuGet buscamos FluentValidation.
+
+Se instala `Fluentvalidation.AspNetCore` en el proyecto `Application`.
+
+```bash
+dotnet add /home/joan/e-learning/udemy/reactivities/Application/Application.csproj package FluentValidation.AspNetCore -v 9.5.3 -s https://api.nuget.org/v3/index.json
+```
+
+Nos centramos en el método `Createactivity` del `ActivitiesController`. Las validaciones se realizan entre el `Command` y el `Handler` de la clase `Create` en `Application/Activities`.
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Domain;
+using FluentValidation;
+using MediatR;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class Create
+    {
+        public class Command : IRequest
+        {
+            public Activity Activity { get; set; }
+        }
+
+        public class CommandValidator : AbstractValidator<Activity>
+        {
+            public CommandValidator()
+            {
+                RuleFor(x => x.Title).NotEmpty();
+            }
+        }
+
+        public class Handler : IRequestHandler<Command>
+        {
+            private readonly DataContext _context;
+            public Handler(DataContext context)
+            {
+                _context = context;
+            }
+
+            public async Task<Unit> Handle(Command request, CancellationToken cancellationToken)
+            {
+                _context.Activities.Add(request.Activity);
+
+                await _context.SaveChangesAsync();
+
+                return Unit.Value;
+            }
+        }
+    }
+}
+```
+
+Hay que inyectar la dependencia en la clase `Startup`.
+
+```c#
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddControllers().AddFluentValidation(config => {
+        config.RegisterValidatorsFromAssemblyContaining<Create>();
+    });
+    services.AddApplicationServices(_config);
+}
+```
+
+Como las mismas validaciones se aplican en el momento de crear o editar una actividad, en lugar de aplicarlas a cada operación, se aplicarán directamente a la actividad.
+
+Se crea la clase `ActivityValidator` en `Application/Activities`:
+
+```c#
+using Domain;
+using FluentValidation;
+
+namespace Application.Activities
+{
+    public class ActivityValidator : AbstractValidator<Activity>
+    {
+        public ActivityValidator()
+        {
+            RuleFor(x => x.Title).NotEmpty();
+            RuleFor(x => x.Description).NotEmpty();
+            RuleFor(x => x.Date).NotEmpty();
+            RuleFor(x => x.Category).NotEmpty();
+            RuleFor(x => x.City).NotEmpty();
+            RuleFor(x => x.Venue).NotEmpty();
+        }
+    }
+}
+```
+
+Las reglas se pueden extender con multitud de opciones.
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Domain;
+using FluentValidation;
+using MediatR;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class Create
+    {
+        public class Command : IRequest
+        {
+            public Activity Activity { get; set; }
+        }
+
+        public class CommandValidator : AbstractValidator<Command>
+        {
+            public CommandValidator()
+            {
+                RuleFor(x => x.Activity).SetValidator(new ActivityValidator);
+            }
+        }
+
+        public class Handler : IRequestHandler<Command>
+        {
+            private readonly DataContext _context;
+            public Handler(DataContext context)
+            {
+                _context = context;
+            }
+
+            public async Task<Unit> Handle(Command request, CancellationToken cancellationToken)
+            {
+                _context.Activities.Add(request.Activity);
+
+                await _context.SaveChangesAsync();
+
+                return Unit.Value;
+            }
+        }
+    }
+}
+```
+
+```json
+{
+    "type": "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+    "title": "One or more validation errors occurred.",
+    "status": 400,
+    "traceId": "00-df53c875b0bb6f4c9910c1bf5fd882ba-7e7ec2a7614b1843-00",
+    "errors": {
+        "City": [
+            "'City' must not be empty."
+        ],
+        "Date": [
+            "'Date' must not be empty."
+        ],
+        "Title": [
+            "'Title' must not be empty."
+        ],
+        "Venue": [
+            "'Venue' must not be empty."
+        ],
+        "Category": [
+            "'Category' must not be empty."
+        ],
+        "Description": [
+            "'Description' must not be empty."
+        ]
+    }
+}
+```
+
+La misma clase `CommandValidator` se define en `Edit`, exactamente igual.
+
+##### 103 Manejar respuestas de error de la API
+
+Se supone el caso de solicitar el detalle de una actividad cuyo id no existe, en postman *Get non existing activity*.
+
+Ahora está devolviendo una respuesta 204 http *No content,* que no es un error.
+
+Se modifica el método `GetActivity` del `ActivitiesController` para evitar que simplemente se devuelva `null` al buscar una actividad por un identificador que no existe.
+
+```c#
+[HttpGet("{id}")]
+public async Task<ActionResult<Activity>> GetActivity(Guid id)
+{
+    var activity = await Mediator.Send(new Details.Query {Id = id});
+
+    if (activity == null) return NotFound();
+
+    return activity;
+}
+```
+
+No se considera una forma apropiada de resolver este tipo de situaciones. Se opta por la solución de que la API, en lugar de devolver una actividad devuelva un objeto resultado, que puede ser error.
+
+El manejo de errores se incluirá en los manipuladores de la aplicación en lugar de en el controlador de la API.
+
+Una forma sería lanzar una excepción.
+
+```c#
+public async Task<Activity> Handle(Query request, CancellationToken cancellationToken)
+{
+    var activity = await _context.Activities.FindAsync(request.Id);
+
+    if (activity == null) throw new Exception("Activity not found");
+
+    return activity;
+}
+```
+
+Las excepciones cuestan más que las respuestas API, respuestas normales. Es una solución pesada. Se deberían evitar las excepciones para controlar el flujo del programa.
+
+##### 104 Manejar respuestas de error de la API 2ª parte
+
+Se crea la clase `Result`, de tipo genérico, en `Application/Core`.
+
+```c#
+namespace Application.Core
+{
+    public class Result<T>
+    {
+        public bool IsSuccess { get; set; }
+        public T Value { get; set; }
+        public string Error { get; set; }
+
+        public static Result<T> Success(T value) => new Result<T> {IsSuccess = true, Value = value};
+        public static Result<T> Failure(string error) => new Result<T> {IsSuccess = false, Error = error};
+    }
+}
+```
+
+Se reestructura la clase `Details`.
+
+```c#
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Domain;
+using MediatR;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class Details
+    {
+        public class Query : IRequest<Result<Activity>>
+        {
+            public Guid Id { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<Activity>>
+        {
+            private readonly DataContext _context;
+            public Handler(DataContext context)
+            {
+                _context = context;
+            }
+
+            public async Task<Result<Activity>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var activity = await _context.Activities.FindAsync(request.Id);
+
+                return Result<Activity>.Success(activity);
+            }
+        }
+    }
+}
+```
+
+Y se adapta el controlador de la API.
+
+```c#
+public async Task<IActionResult<Activity>> GetActivity(Guid id)
+{
+    var result =  await Mediator.Send(new Details.Query {Id = id});
+
+    if (result.IsSuccess && result.Value != null)
+        return Ok(result.Value);
+    if (result.IsSuccess && result.Value == null)
+        return NotFound();
+    return BadRequest(result.Error);
+}
+```
+
+El manejo del resultado se lleva a la clase base del controlador para no tener que repetir esta lógica en cada operación.
+
+##### 105 Manejar respuestas de error de la API 3ª parte
+
+Se revisan todas las operaciones del controlador para devolver un `Result` de tipo `Unit`, incluso en el caso de `Command`, que hasta ahora no devolvían nada.
+
+##### 106 Manejar respuestas de error de la API 4ª parte
+
+Continúa la revisión con las operaciones `Edit` y `Delete`. Ambas afectan a una actividad que tiene que existir, el parámetro identificador debe ser válido.
+
+Hay que ajustar `HandleResult` de `BaseApiController` para manejar el caso de que el resultado sea nulo.
+
+En el caso de Edit es curioso que editar una actividad sin cambiar ninguno de sus atributos, es decir sin cambios, se trate como un error.
+
+```json
+{
+	"title": "Test Create Activity updated",
+	"description": "Description of the test event",
+	"category": "Culture",
+	"date": "2021-03-31T07:54:00.29",
+	"city": "London",
+	"venue": "Tower of London"
+}
+```
+
+```
+400 Bad Request
+Failed to edit the activity
+```
+
+##### 107 Manejar excepciones
+
+Se prepara `Delete` para provocar una excepción en caso de que el identificador especificado no exista.
+
+```c#
+public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+{
+    var activity = await _context.Activities.FindAsync(request.Id);
+
+    //if (activity == null) return null;
+
+    _context.Remove(activity); // provoca una excepción con 500 Internal Server Error
+
+    var result = await _context.SaveChangesAsync() > 0;
+
+    if (!result) return Result<Unit>.Failure("Failed to delete the activity");
+
+    return Result<Unit>.Success(Unit.Value);
+}
+```
+
+Hay que tener en cuenta que la operación se está ejecutando en un entorno de desarrollo y que el tratamiento de excepciones no será igual en producción. En `Startup`:
+
+```c#
+public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+{
+    if (env.IsDevelopment())
+    {
+        app.UseDeveloperExceptionPage(); // <-- Importante!
+        app.UseSwagger();
+        app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "API v1"));
+    }
+
+    // app.UseHttpsRedirection();
+
+    app.UseRouting();
+
+    app.UseCors("CorsPolicy");
+
+    app.UseAuthorization();
+
+    app.UseEndpoints(endpoints =>
+    {
+        endpoints.MapControllers();
+    });
+}
+```
+
+Se crea `AppException` en `Application/Core`.
+
+```c#
+namespace Application.Core
+{
+    public class AppException
+    {
+        public AppException(int statusCode, string message, string details = null)
+        {
+            StatusCode = statusCode;
+            Message = message;
+            Details = details;
+        }
+
+        public int StatusCode { get; set; }
+        public string Message { get; set; }
+        public string Details { get; set; }
+    }
+}
+```
+
+https://docs.microsoft.com/en-us/aspnet/core/fundamentals/middleware/?view=aspnetcore-5.0
+
+> Middleware is software that's assembled into an app pipeline to handle requests and responses. Each component:
+>
+> - Chooses whether to pass the request to the next component in the pipeline.
+> - Can perform work before and after the next component in the pipeline.
+>
+> Request delegates are used to build the request pipeline. The request delegates handle each HTTP request.
+
+Se crea la clase `ExceptionMiddleware`.
+
+```c#
+using System;
+using System.Net;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Application.Core;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace API.Middleware
+{
+    public class ExceptionMiddleware
+    {
+        private readonly RequestDelegate _next;
+        private readonly ILogger<ExceptionMiddleware> _logger;
+        private readonly IHostEnvironment _env;
+        public ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddleware> logger,
+            IHostEnvironment env)
+        {
+            this._env = env;
+            this._logger = logger;
+            this._next = next;
+        }
+
+        public async Task InvokeAsync(HttpContext context)
+        {
+            try
+            {
+                await _next(context);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, ex.Message);
+                context.Response.ContentType = "application/json";
+                context.Response.StatusCode = (int) HttpStatusCode.InternalServerError;
+
+                var response = _env.IsDevelopment()
+                    ? new AppException(context.Response.StatusCode, ex.Message, ex.StackTrace?.ToString())
+                    : new AppException(context.Response.StatusCode, "Server Error");
+
+                var options = new JsonSerializerOptions{PropertyNamingPolicy = JsonNamingPolicy.CamelCase};
+
+                var json = JsonSerializer.Serialize(response, options);
+
+                await context.Response.WriteAsync(json);
+            }
+        }
+    }
+}
+```
+
+Se adapta `Startup` para usar el *middleware*.
+
+Ahora la respuesta es más manejable, en formato *json*, incluso tratándose de una excepción.
+
+```json
+{
+    "statusCode": 500,
+    "message": "Value cannot be null. (Parameter 'entity')",
+    "details": "   at Microsoft.EntityFrameworkCore.Utilities.Check.NotNull[T](T value, String parameterName)\n   at Microsoft.EntityFrameworkCore.DbContext.Remove[TEntity](TEntity entity)\n   at Application.Activities.Delete.Handler.Handle(Command request, CancellationToken cancellationToken) in /home/joan/e-learning/udemy/reactivities/Application/Activities/Delete.cs:line 31\n   at MediatR.Pipeline.RequestExceptionProcessorBehavior`2.Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate`1 next)\n   at..."
+}
+```
+
+##### 108 Preparándose para configurar el manejo de errores en el cliente de la aplicación
+
+Se usa un nuevo controlador de pruebas, con los diferentes tipos de error previstos, y un componente que los genera, llamando al controlador mediante botones.
+
+Para mostrar los errores se usará un `Toaster`.
+
+```bash
+[joan@alkaid client-app]$ npm install react-toastify
+```
+
+```tsx
+import React from 'react';
+import { Container } from 'semantic-ui-react';
+import NavBar from './NavBar';
+import ActivityDashboard from '../../features/activities/dashboard/ActivityDashboard';
+import { observer } from 'mobx-react-lite';
+import { Route, useLocation } from 'react-router';
+import HomePage from '../../features/home/HomePage';
+import ActivityForm from '../../features/activities/form/ActivityForm';
+import ActivityDetails from '../../features/activities/details/ActivityDetails';
+import TestErrors from '../../features/errors/TestError';
+import { ToastContainer } from 'react-toastify';
+
+function App() {
+  const location = useLocation();
+
+  // </> equival a emprar <Fragment/>
+  return (
+    <>
+      <ToastContainer position='bottom-right' hideProgressBar />
+      <Route exact path='/' component={HomePage} />
+      <Route
+        path={'/(.+)'}
+        render={() => (
+          <>
+            <NavBar />
+            <Container style={{ marginTop: '7em' }}>
+              <Route exact path='/activities' component={ActivityDashboard} />
+              <Route path='/activities/:id' component={ActivityDetails} />
+              <Route key={location.key} path={['/createActivity', '/manage/:id']} component={ActivityForm} />
+              <Route path='/errors' component={TestErrors} />
+            </Container>
+          </>
+        )}
+      />
+    </>
+  );
+}
+
+export default observer(App);
+```
+
+Además se importan los estilos en `index.tsx`.
+
+##### 109 Usar un interceptor para manejar las respuestas de error de la API
+
+Se adapta el interceptor en `agent.ts`. Todo lo que no sea un 200 se considera como **rechazado**.
+
+```tsx
+import axios, { AxiosError, AxiosResponse } from 'axios';
+import { toast } from 'react-toastify';
+import { Activity } from '../models/activity';
+
+const sleep = (delay: number) => {
+    return new Promise((resolve) => {
+        setTimeout(resolve, delay);
+    })
+}
+
+axios.defaults.baseURL = 'http://localhost:5000/api';
+
+axios.interceptors.response.use(async response => {
+    await sleep(1000);
+    return response;
+}, (error: AxiosError) => {
+    const {data, status} = error.response!;
+    switch (status) {
+        case 400:
+            toast.error('bad request');
+            break;
+        case 401:
+            toast.error('unauthorised');
+            break;
+        case 404:
+            toast.error('not found');
+            break;
+        case 500:
+            toast.error('server error');
+            break;
+    }
+    return Promise.reject(error);
+})
+
+const responseBody = <T>(response: AxiosResponse<T>) => response.data;
+
+const requests = {
+    get: <T>(url: string) => axios.get<T>(url).then(responseBody),
+    post: <T>(url: string, body: {}) => axios.post<T>(url, body).then(responseBody),
+    put: <T>(url: string, body: {}) => axios.put<T>(url, body).then(responseBody),
+    del: <T>(url: string) => axios.delete<T>(url).then(responseBody)
+}
+
+const Activities = {
+    list: () => requests.get<Activity[]>('/activities'),
+    details: (id: string) => requests.get<Activity>(`/activities/${id}`),
+    create: (activity: Activity) => requests.post<void>('/activities', activity),
+    update: (activity: Activity) => requests.put<void>(`/activities/${activity.id}`, activity),
+    delete: (id: string) => requests.del<void>(`/activities/${id}`)
+}
+
+const agent = {
+    Activities
+}
+
+export default agent;
+```
+
+##### 110 Añadir un componente 'no encontrado'
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/101.1.png)
+
+se monta un componente `NotFound`:
+
+```tsx
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Button, Header, Icon, Segment } from 'semantic-ui-react';
+
+export default function NotFound() {
+    return (
+        <Segment placeholder>
+            <Header icon>
+                <Icon name='search' />
+                Oops - we've looked everywhere and could not find this.
+            </Header>
+            <Segment.Inline>
+                <Button as={Link} to='/activities' primary>
+                    Return to activities page
+                </Button>
+            </Segment.Inline>
+        </Segment>
+    )
+}
+```
+
+La complejidad radica en definir una ruta para el componente. Se utiliza el historial para redirigir el flujo hacia el componente, a través de la ruta definida en `App`. Ha sido necesario adaptar `index.tsx` para dar acceso al historial en `agent.ts`.
+
+##### 111 Manejar errores 400
+
+El objetivo es distinguir un error de validación de campos en la API de un error 400  general.
+
+```tsx
+axios.interceptors.response.use(async response => {
+    await sleep(1000);
+    return response;
+}, (error: AxiosError) => {
+    const {data, status} = error.response!;
+    switch (status) {
+        case 400:
+            //toast.error('bad request');
+            if (data.errors) { // es un error de validación
+                const modalStateErrors = [];
+                for (const key in data.errors) {
+                    if (data.errors[key]) {
+                        modalStateErrors.push(data.errors[key]);
+                    }
+                }
+                throw modalStateErrors.flat();
+            } else {
+                toast.error(data);
+            }
+            break;
+        case 401:
+            toast.error('unauthorised');
+            break;
+        case 404:
+            //toast.error('not found');
+            history.push('/not-found');
+            break;
+        case 500:
+            toast.error('server error');
+            break;
+    }
+    return Promise.reject(error);
+})
+```
+
+Se crea un componente `ValidationErrors` para mostrar los errores de validación.
+
+##### 112 Manejar errores 500 en el cliente
+
+Se crea una interfaz que representa el mensaje de error. Es necesario utilizar un store MobX específico para manejar el error y se crea un componente `ServerError` para su presentación
+
+##### 113 Manejar el error de validación de un GUID inválido
+
