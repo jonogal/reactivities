@@ -2837,3 +2837,423 @@ https://date-fns.org/
 Hay que revisar todos los puntos de la aplicación en los que se muestra una fecha y formatearla.
 
 ##### 125 Conectando el envío del formulario a Formik
+
+##### 126 Sumario de la sección 11
+
+> Validation on the server - essential
+>
+> Validation on the client - nice to have
+
+#### Sección 12: Identidad
+
+##### 127 Introducción
+
+* ASPNET Core Identity
+  * Membership system
+  * Supports login stored in Identity
+  * Supports externals providers
+  * Comes with default stores
+  * UserManager
+  * SignInManager
+* JWT Token Authentication
+* Login/Register
+* Authenticated Requests
+
+El sistema de Identificación se considera una pieza aparte de la aplicación, fuera del ámbito de negocio.
+
+##### 128 Añadir una entidad usuario
+
+Toda la lógica de identidades se mantiene en la capa `API` (a diferencia de cómo se hizo en la última versión del curso que se hacía en `Application`).
+
+Buscar en la galería NuGet microsoft.aspnetcore.identity para instalar el paquete `Microsoft.AspNetCore.Identity.EntityFrameworkCore` en el proyecto `Domain`.
+
+```bash
+dotnet add /home/joan/e-learning/udemy/reactivities/Domain/Domain.csproj package Microsoft.AspNetCore.Identity.EntityFrameworkCore -v 5.0.4 -s https://api.nuget.org/v3/index.json
+```
+
+Se añaden propiedades adicionales para `AppUser`. La mayoría los hereda de `IdentityUser` (UserName, Email, etc).
+
+##### 129 Añadir un `IdentityDbContext`
+
+De momento tenemos:
+
+```c#
+using Domain;
+using Microsoft.EntityFrameworkCore;
+
+namespace Persistence
+{
+    public class DataContext : DbContext
+    {
+        public DataContext(DbContextOptions options) : base(options)
+        {
+        }
+
+        public DbSet<Activity> Activities { get; set; }
+    }
+}
+```
+
+Se adapta para el uso de `Identity`.
+
+```c#
+using Domain;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace Persistence
+{
+    public class DataContext : IdentityDbContext<AppUser>
+    {
+        public DataContext(DbContextOptions options) : base(options)
+        {
+        }
+
+        public DbSet<Activity> Activities { get; set; }
+    }
+}
+```
+
+Se prepara una migración. Es importante parar la ejecución de la aplicación.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations add IdentityAdded -p Persistence -s API
+Build started...
+Build succeeded.
+The Entity Framework tools version '5.0.3' is older than that of the runtime '5.0.4'. Update the tools for the latest features and bug fixes.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Done. To undo this action, use 'ef migrations remove'
+```
+
+Se crean muchas tablas de infraestructura entre ellas `AspNetUsers`, que incluye las columnas `DisplayName` y `Bio` que hemos definido:
+
+```c#
+migrationBuilder.CreateTable(
+     name: "AspNetUsers",
+     columns: table => new
+     {
+         Id = table.Column<string>(type: "TEXT", nullable: false),
+         DisplayName = table.Column<string>(type: "TEXT", nullable: true),
+         Bio = table.Column<string>(type: "TEXT", nullable: true),
+         UserName = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
+         NormalizedUserName = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
+         Email = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
+         NormalizedEmail = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
+         EmailConfirmed = table.Column<bool>(type: "INTEGER", nullable: false),
+         PasswordHash = table.Column<string>(type: "TEXT", nullable: true),
+         SecurityStamp = table.Column<string>(type: "TEXT", nullable: true),
+         ConcurrencyStamp = table.Column<string>(type: "TEXT", nullable: true),
+         PhoneNumber = table.Column<string>(type: "TEXT", nullable: true),
+         PhoneNumberConfirmed = table.Column<bool>(type: "INTEGER", nullable: false),
+         TwoFactorEnabled = table.Column<bool>(type: "INTEGER", nullable: false),
+         LockoutEnd = table.Column<DateTimeOffset>(type: "TEXT", nullable: true),
+         LockoutEnabled = table.Column<bool>(type: "INTEGER", nullable: false),
+         AccessFailedCount = table.Column<int>(type: "INTEGER", nullable: false)
+     },
+     constraints: table =>
+     {
+         table.PrimaryKey("PK_AspNetUsers", x => x.Id);
+     });
+```
+
+##### 130 Configurar `Identity` en la clase `Startup`
+
+Se crea una extensión de `IServicesCollection` para configurar `Identity`.
+
+```c#
+using Domain;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Persistence;
+
+namespace API.Extensions
+{
+    public static class IdentityServiceExtensions
+    {
+        public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration config)
+        {
+            services.AddIdentityCore<AppUser>(opt => {
+                // Identity utiliza unas opciones por defecto que se pueden configurar. Por ejemplo:
+                opt.Password.RequireNonAlphanumeric = false;
+            })
+            .AddEntityFrameworkStores<DataContext>()
+            .AddSignInManager<SignInManager<AppUser>>();
+
+            services.AddAuthentication();
+
+            return services;
+        }
+    }
+}
+```
+
+Se registran la extensión en `Startup`.
+
+```c#
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddControllers().AddFluentValidation(config => {
+        config.RegisterValidatorsFromAssemblyContaining<Create>();
+    });
+    services.AddApplicationServices(_config);
+    services.AddIdentityServices(_config); // <-- Identity
+}
+```
+
+##### 131 Añadir usuarios semilla
+
+Se añade la creación de 3 usuarios en `Seed`, Bob, Tom y Jane, con la misma Pa$$w0rd. Se modifica `Main` para pasar `UserManager` al método `SeedData`.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/131.1.png)
+
+##### 132 Crear los DTOs de usuario (Data Transfer Object)
+
+> In the field of programming a **data transfer object** (**DTO**[[1\]](https://en.wikipedia.org/wiki/Data_transfer_object#cite_note-msdn-1)[[2\]](https://en.wikipedia.org/wiki/Data_transfer_object#cite_note-fowler-2)) is an object that carries data between processes. The motivation for  its use is that communication between processes is usually done  resorting to remote interfaces (e.g., web services), where each call is  an expensive operation.[[2\]](https://en.wikipedia.org/wiki/Data_transfer_object#cite_note-fowler-2) Because the majority of the cost of each call is related to the  round-trip time between the client and the server, one way of reducing  the number of calls is to use an object (the DTO) that aggregates the  data that would have been transferred by the several calls, but that is  served by one call only.[[2\]](https://en.wikipedia.org/wiki/Data_transfer_object#cite_note-fowler-2)
+
+Se crean 4 clases en `API/DTOs`.
+
+##### 133 Añadir un controlador de cuentas
+
+No se va a usar MediatR para este aspecto de la aplicación.
+
+```c#
+using System.Threading.Tasks;
+using API.DTOs;
+using Domain;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AccountController : ControllerBase
+    {
+        private readonly UserManager<AppUser> _userManager;
+        private readonly SignInManager<AppUser> _signInManager;
+        public AccountController(UserManager<AppUser> userManager,
+            SignInManager<AppUser> signInManager)
+        {
+            this._signInManager = signInManager;
+            this._userManager = userManager;
+
+        }
+
+        [HttpPost("login")]
+        public async Task<ActionResult<UserDto>> Login(LoginDto loginDto)
+        {
+            var user = await _userManager.FindByEmailAsync(loginDto.Email);
+
+            if (user == null) return Unauthorized();
+
+            var result = await _signInManager.CheckPasswordSignInAsync(user, loginDto.Password, false);
+
+            if (result.Succeeded)
+            {
+                return new UserDto
+                {
+                    DisplayName = user.DisplayName,
+                    Image = null,
+                    Token = "This will be a token",
+                    Username = user.UserName
+                };
+            }
+
+            return Unauthorized();
+        }
+    }
+}
+```
+
+Normalmente después de añadir un nuevo controlador a la aplicación hay que reiniciarla.
+
+##### 134 JSON Web Tokens (JWT)
+
+https://jwt.io/
+
+Son cadenas de texto con 3 partes, separadas por un punto: 
+
+* cabecera,
+* carga útil y
+* verificación de firma.
+
+En la carga útil o *payload* se incluyen reclamaciones, para nada información confidencial.
+
+##### 135 Crear un servicio de fichas (token)
+
+```bash
+dotnet add /home/joan/e-learning/udemy/reactivities/API/API.csproj package Microsoft.IdentityModel.Tokens -v 6.9.0 -s https://api.nuget.org/v3/index.json
+
+dotnet add /home/joan/e-learning/udemy/reactivities/API/API.csproj package System.IdentityModel.Tokens.Jwt -v 6.9.0 -s https://api.nuget.org/v3/index.json
+```
+
+La clave que se usa en el servicio de fichas nunca sale del servidor.
+
+```c#
+using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Domain;
+using Microsoft.IdentityModel.Tokens;
+
+namespace API.Services
+{
+    public class TokenService
+    {
+        public string CreateToken(AppUser user)
+        {
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.Name, user.UserName),
+                new Claim(ClaimTypes.NameIdentifier, user.Id),
+                new Claim(ClaimTypes.Email, user.Email)
+            };
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("super secret key"));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256Signature);
+
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(claims),
+                Expires = DateTime.Now.AddDays(7),
+                SigningCredentials = creds
+            }
+
+            var tokenHandler = new JwtSecurityTokenHandler();
+
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+
+            return tokenHandler.WriteToken(token);
+        }
+    }
+}
+```
+
+El servicio creado se tiene que inyectar en el controlador de cuentas.
+
+##### 136 Autenticarse en la aplicación
+
+```bash
+dotnet add /home/joan/e-learning/udemy/reactivities/API/API.csproj package Microsoft.AspNetCore.Authentication.JwtBearer -v 5.0.4 -s https://api.nuget.org/v3/index.json
+```
+
+> bearer n    (bringer: of news)    portador, portadora nm, nf
+>                                                        mensajero, mensajera nm, nf
+
+Se configura `services.AddAuthentication` en `IdentityServiceExtensions`.
+
+```c#
+var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("super secret key"));
+
+services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(opt =>
+    {
+        opt.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = key,
+            ValidateIssuer = false,
+            ValidateAudience = false
+        };
+    });
+```
+
+Se añade `app.UseAuthentication()` en `Startup`. Es importante hacerlo antes de `app.UseAuthorization()`.
+
+En los puntos finales del controlador hay que indicar que usan autorización.
+
+```c#
+[Authorize]
+[HttpGet("{id}")]
+public async Task<IActionResult> GetActivity(Guid id)
+{
+    return HandleResult(await Mediator.Send(new Details.Query {Id = id}));
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/136.1.png)
+
+##### 137 Guardando secretos en desarrollo
+
+Server environment variables: `appSettings.Development.json` y `appSettings.json`.
+
+https://docs.microsoft.com/en-us/aspnet/core/security/app-secrets?view=aspnetcore-5.0&tabs=linux
+
+Es necesario inyectar la configuración en `TokenService`.
+
+##### 138 Crear una política de autorización
+
+Para que la autorización se aplique por defecto, no explicitamente.
+
+En `Startup`:
+
+```c#
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddControllers(opt => {
+        var policy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
+        opt.Filters.Add(new AuthorizeFilter(policy));
+    })
+        .AddFluentValidation(config =>
+        {
+            config.RegisterValidatorsFromAssemblyContaining<Create>();
+        });
+    services.AddApplicationServices(_config);
+    services.AddIdentityServices(_config);
+}
+```
+
+Para evitar que el punto final `login` requiera autorización se marca como `[AllowAnonymous]` el controlador.
+
+##### 139 Registrar nuevos usuarios
+
+Se crea un nuevo punto final en el controlador de cuentas
+
+```c#
+[HttpPost("register")]
+public async Task<ActionResult<UserDto>> Register(RegisterDto registerDto)
+{
+    if (await _userManager.Users.AnyAsync(u => u.Email == registerDto.Email))
+    {
+        return BadRequest("Email taken");
+    }
+
+    if (await _userManager.Users.AnyAsync(u => u.UserName == registerDto.Username))
+    {
+        return BadRequest("Username taken");
+    }
+
+    var user = new AppUser
+    {
+        DisplayName = registerDto.DisplayName,
+        Email = registerDto.Email,
+        UserName = registerDto.Username
+    };
+
+    var result = await _userManager.CreateAsync(user, registerDto.Password);
+
+    if (result.Succeeded)
+    {
+        return new UserDto
+        {
+            DisplayName = user.DisplayName,
+            Image = null,
+            Token = _tokenService.CreateToken(user),
+            Username = user.UserName
+        };
+    }
+
+    return BadRequest("Problem registering user");
+}
+```
+
+El problema es que tenemos un error excesivamente genérico en caso de que el registro falle. Puede ser, por ejemplo, por usar una clave demasiado débil, que no se ajuste a las políticas establecidas.
+
+##### 140 Validar el registro de usuarios
+
+En lugar de usar `FluentValidation` como en el resto de la aplicación, en el caso de la gestión de cuentas se usarán anotaciones en `RegisterDto`, para simplificar.
+
