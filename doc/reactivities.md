@@ -3257,3 +3257,575 @@ El problema es que tenemos un error excesivamente genérico en caso de que el re
 
 En lugar de usar `FluentValidation` como en el resto de la aplicación, en el caso de la gestión de cuentas se usarán anotaciones en `RegisterDto`, para simplificar.
 
+```c#
+using System.ComponentModel.DataAnnotations;
+
+namespace API.DTOs
+{
+    public class RegisterDto
+    {
+        [Required]
+        public string DisplayName { get; set; }
+
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; }
+
+        [Required]
+        [RegularExpression("(?=.*\\d)(?=.*[a-z])(?=.*[A-Z]).{4,8}$", ErrorMessage = "Password must be complex")]
+        public string Password { get; set; }
+
+        [Required]
+        public string Username { get; set; }
+    }
+}
+```
+
+##### 141 Obtener el usuario actual
+
+```c#
+using System.Security.Claims;
+using System.Threading.Tasks;
+using API.DTOs;
+using API.Services;
+using Domain;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace API.Controllers
+{
+    [AllowAnonymous]
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AccountController : ControllerBase
+    {
+        private readonly UserManager<AppUser> _userManager;
+        private readonly SignInManager<AppUser> _signInManager;
+        private readonly TokenService _tokenService;
+        public AccountController(UserManager<AppUser> userManager,
+        SignInManager<AppUser> signInManager, TokenService tokenService)
+        {
+            this._tokenService = tokenService;
+            this._signInManager = signInManager;
+            this._userManager = userManager;
+        }
+
+        [HttpPost("login")]
+        public async Task<ActionResult<UserDto>> Login(LoginDto loginDto)
+        {
+            var user = await _userManager.FindByEmailAsync(loginDto.Email);
+
+            if (user == null) return Unauthorized();
+
+            var result = await _signInManager.CheckPasswordSignInAsync(user, loginDto.Password, false);
+
+            if (result.Succeeded)
+            {
+                return CreateUserObject(user);
+            }
+
+            return Unauthorized();
+        }
+
+        [HttpPost("register")]
+        public async Task<ActionResult<UserDto>> Register(RegisterDto registerDto)
+        {
+            if (await _userManager.Users.AnyAsync(u => u.Email == registerDto.Email))
+            {
+                return BadRequest("Email taken");
+            }
+
+            if (await _userManager.Users.AnyAsync(u => u.UserName == registerDto.Username))
+            {
+                return BadRequest("Username taken");
+            }
+
+            var user = new AppUser
+            {
+                DisplayName = registerDto.DisplayName,
+                Email = registerDto.Email,
+                UserName = registerDto.Username
+            };
+
+            var result = await _userManager.CreateAsync(user, registerDto.Password);
+
+            if (result.Succeeded)
+            {
+                return CreateUserObject(user);
+            }
+
+            return BadRequest("Problem registering user");
+        }
+
+        [Authorize]
+        [HttpGet]
+        public async Task<ActionResult<UserDto>> GetCurrentUser()
+        {
+            var user = await _userManager.FindByEmailAsync(User.FindFirstValue(ClaimTypes.Email));
+
+            return CreateUserObject(user);
+        }
+
+        private UserDto CreateUserObject(AppUser user)
+        {
+            return new UserDto
+            {
+                DisplayName = user.DisplayName,
+                Image = null,
+                Token = _tokenService.CreateToken(user),
+                Username = user.UserName
+            };
+        }
+    }
+}
+```
+
+##### 142 Sumario de la sección 12
+
+#### Sección 13: Inicio de sesión y registro en la parte de cliente
+
+##### 143 Introducción
+
+* Interceptores Axios
+* Reacciones MobX
+* Errores de envío de formulario
+* Modales
+
+##### 144 Crear un formulario de inicio de sesión
+
+En este momento la aplicación ha quedado sin funcionalidad debido a la necesidad de identificarse en la API. No se puede obtener la lista de actividades.
+
+Como solución alternativa y temporal se pueden usar anotaciones en el controlador de actividades `[AllowAnonimous]`.
+
+Se define el formulario, inicialmente muy simple.
+
+```tsx
+import { Form, Formik } from 'formik';
+import React from 'react';
+import { Button } from 'semantic-ui-react';
+import MyTextInput from '../../app/common/form/MyTextInput';
+
+export default function LoginForm() {
+    return (
+        <Formik
+            initialValues={{ email: '', password: '' }}
+            onSubmit={values => console.log(values)}
+        >
+            {({handleSubmit})=> (
+                <Form className='ui form' onSubmit={handleSubmit} autoComplete='off'>
+                    <MyTextInput name='email' placeholder='Email' />
+                    <MyTextInput name='password' placeholder='Password' type='password' />
+                    <Button positive content='Login' type='submit' fluid />
+                </Form>
+            )}
+        </Formik>
+    );
+}
+```
+
+Se añade la ruta del formulario en `App`.
+
+Se cambia el `Link` de `/activities` a `/login` en `HomePage`.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/144.1.png)
+
+##### 145 Crear las interfaces y métodos
+
+Las interfaces se crean en `/models/user.ts` y los métodos en `/api/agent.ts`.
+
+```tsx
+const Account = {
+    current: () => requests.get<User>('/account'),
+    login: (user: UserFormValues) => requests.post<User>('/account/login', user),
+    register: (user: UserFormValues) => requests.post<User>('/account/register', user)
+}
+
+const agent = {
+    Activities,
+    Account
+}
+```
+
+##### 146 Crear un almacén de usuario
+
+```tsx
+import { makeAutoObservable } from "mobx";
+import agent from "../api/agent";
+import { User, UserFormValues } from "../models/user";
+
+export default class UserStore {
+    user: User | null = null;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isLoggedIn() {
+        return !!this.user;
+    }
+
+    login = async (creds: UserFormValues) => {
+        try {
+            const user = await agent.Account.login(creds);
+            console.log(user);
+        } catch (error) {
+            throw error;
+        }
+    }
+}
+```
+
+Se añade a la lista de almacenes en `/stores/store.ts`.
+
+```tsx
+import { createContext, useContext } from "react";
+import ActivityStore from "./activityStore";
+import CommonStore from "./commonStore";
+import UserStore from "./userStore";
+
+interface Store {
+    activityStore: ActivityStore;
+    commonStore: CommonStore;
+    userStore: UserStore;
+}
+
+export const store: Store = {
+    activityStore: new ActivityStore(),
+    commonStore: new CommonStore(),
+    userStore: new UserStore()
+}
+
+export const StoreContext = createContext(store);
+
+// se crea un react hook para acceder al contexto de los almacenes
+// (de momento uno)
+export function useStore() {
+    return useContext(StoreContext);
+}
+```
+
+Se adapta `LoginForm` para usar el nuevo almacén.
+
+```tsx
+import { Form, Formik } from 'formik';
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Button } from 'semantic-ui-react';
+import MyTextInput from '../../app/common/form/MyTextInput';
+import { useStore } from '../../app/stores/store';
+
+export default observer(function LoginForm() {
+    const { userStore } = useStore();
+
+    return (
+        <Formik
+            initialValues={{ email: '', password: '' }}
+            onSubmit={values => userStore.login(values)}
+        >
+            {({ handleSubmit, isSubmitting }) => (
+                <Form className='ui form' onSubmit={handleSubmit} autoComplete='off'>
+                    <MyTextInput name='email' placeholder='Email' />
+                    <MyTextInput name='password' placeholder='Password' type='password' />
+                    <Button loading={isSubmitting} positive content='Login' type='submit' fluid />
+                </Form>
+            )}
+        </Formik>
+    );
+})
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/146.1.png)
+
+##### 147 Mostrar errores en el formulario
+
+```tsx
+import { ErrorMessage, Form, Formik } from 'formik';
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Button, Label } from 'semantic-ui-react';
+import MyTextInput from '../../app/common/form/MyTextInput';
+import { useStore } from '../../app/stores/store';
+
+export default observer(function LoginForm() {
+    const { userStore } = useStore();
+
+    return (
+        <Formik
+            initialValues={{ email: '', password: '', error: null }}
+            onSubmit={(values, { setErrors }) => userStore.login(values)
+                .catch(error => setErrors({ error: 'Invalid email or password' }))}
+        >
+            {({ handleSubmit, isSubmitting, errors }) => (
+                <Form className='ui form' onSubmit={handleSubmit} autoComplete='off'>
+                    <MyTextInput name='email' placeholder='Email' />
+                    <MyTextInput name='password' placeholder='Password' type='password' />
+                    <ErrorMessage
+                        name='error'
+                        render={() =>
+                            <Label style={{ marginBottom: 10 }} basic color='red' content={errors.error} />}
+                    />
+                    <Button loading={isSubmitting} positive content='Login' type='submit' fluid />
+                </Form>
+            )}
+        </Formik>
+    );
+})
+```
+
+##### 148 Configuración del token al iniciar sesión
+
+Se guarda la ficha en `CommonStore`. Se añade además una variable de estado `appLoaded` para controlar esta situación.
+
+Los cambios más importantes se aplican a `userStore`.
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import { history } from "../..";
+import agent from "../api/agent";
+import { User, UserFormValues } from "../models/user";
+import { store } from "./store";
+
+export default class UserStore {
+    user: User | null = null;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isLoggedIn() {
+        return !!this.user;
+    }
+
+    login = async (creds: UserFormValues) => {
+        try {
+            const user = await agent.Account.login(creds);
+            store.commonStore.setToken(user.token);
+            runInAction(() => { this.user = user; })
+            history.push('/activities');
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    logout = () => {
+        store.commonStore.setToken(null);
+        window.localStorage.removeItem('jwt');
+        this.user = null;
+        history.push('/');
+    }
+}
+```
+
+##### 149 Actualizar la página de inicio y la barra de navegación
+
+En `HomePage` tenemos que saber si el usuario está identificado o no.
+
+##### 150 Persistencia del inicio de sesión
+
+Cuando el usuario refresca el navegador cuando está en la lista de actividades, se pierde la información de su sesión.
+
+Se aprovecha el hecho de que la ficha permanece en el almacenamiento local.
+
+Se usarán las reacciones MobX.
+
+En lugar de asignar nulo a la ficha, se usará el almacenamiento local. Se define una reacción al cambiar el valor de `token`.
+
+```tsx
+import { makeAutoObservable, reaction } from "mobx";
+import { ServerError } from "../models/serverError";
+
+export default class CommonStore {
+    error: ServerError | null = null;
+    token: string | null = window.localStorage.getItem('jwt');
+    appLoaded = false;
+
+    constructor() {
+        makeAutoObservable(this);
+
+        reaction(
+            () => this.token,
+            token => {
+                if (token) {
+                    window.localStorage.setItem('jwt', token)
+                } else {
+                    window.localStorage.removeItem('jwt');
+                }
+            }
+        )
+    }
+
+    setServerError = (error: ServerError) => {
+        this.error = error;
+    }
+
+    setToken = (token: string | null) => {
+        this.token = token;
+    }
+
+    setAppLoaded = () => {
+        this.appLoaded = true;
+    }
+}
+```
+
+En el almacén de usuarios necesitamos un método que obtenga un usuario a partir de la ficha, que ya está definido en la API.
+
+```tsx
+getUser = async () => {
+    try {
+        const user = await agent.Account.current();
+        runInAction(() => this.user = user);
+    } catch (error) {
+        console.log(error);
+    }
+}
+```
+
+En `App`, que es el primer componente que se carga en la aplicación se obtienen los almacenes común y de usuario para controlar el estado de la sesión mediante `useEffect`.
+
+```tsx
+import React, { useEffect } from 'react';
+import { Container } from 'semantic-ui-react';
+import NavBar from './NavBar';
+import ActivityDashboard from '../../features/activities/dashboard/ActivityDashboard';
+import { observer } from 'mobx-react-lite';
+import { Route, Switch, useLocation } from 'react-router';
+import HomePage from '../../features/home/HomePage';
+import ActivityForm from '../../features/activities/form/ActivityForm';
+import ActivityDetails from '../../features/activities/details/ActivityDetails';
+import TestErrors from '../../features/errors/TestError';
+import { ToastContainer } from 'react-toastify';
+import NotFound from '../../features/errors/NotFound';
+import ServerError from '../../features/errors/ServerError';
+import LoginForm from '../../features/users/LoginForm';
+import { useStore } from '../stores/store';
+import LoadingComponent from './LoadingComponent';
+
+function App() {
+  const location = useLocation();
+  const { commonStore, userStore } = useStore();
+
+  useEffect(() => {
+    if (commonStore.token) {
+      userStore.getUser().finally(() => commonStore.setAppLoaded());
+    } else {
+      commonStore.setAppLoaded();
+    }
+  }, [commonStore, userStore])
+
+  if (!commonStore.appLoaded) return <LoadingComponent content='Loading app...' />
+
+  // </> equival a emprar <Fragment/>
+  return (
+    <>
+      <ToastContainer position='bottom-right' hideProgressBar />
+      <Route exact path='/' component={HomePage} />
+      <Route
+        path={'/(.+)'}
+        render={() => (
+          <>
+            <NavBar />
+            <Container style={{ marginTop: '7em' }}>
+              <Switch>
+                <Route exact path='/activities' component={ActivityDashboard} />
+                <Route path='/activities/:id' component={ActivityDetails} />
+                <Route key={location.key} path={['/createActivity', '/manage/:id']} component={ActivityForm} />
+                <Route path='/errors' component={TestErrors} />
+                <Route path='/server-error' component={ServerError} />
+                <Route path='/login' component={LoginForm} />
+                <Route component={NotFound} />
+              </Switch>
+            </Container>
+          </>
+        )}
+      />
+    </>
+  );
+}
+
+export default observer(App);
+```
+
+Falla miserablemente porque en las peticiones no se pasa la ficha en la cabecera.
+
+```
+Value cannot be null. (Parameter 'email')
+Stack trace
+at Microsoft.AspNetCore.Identity.UserManager`1.FindByEmailAsync(String email) at API.Controllers.AccountController.GetCurrentUser() in /home/joan/e-learning/udemy/reactivities/API/Controllers/AccountController.cs:line 80 at lambda_method190(Closure , Object ) at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments) at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask) at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted) at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context) at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted) at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.InvokeInnerFilterAsync() --- End of stack trace from previous location --- at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|19_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted) at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker) at Microsoft.AspNetCore.Routing.EndpointMiddleware.<Invoke>g__AwaitRequestTask|6_0(Endpoint endpoint, Task requestTask, ILogger logger) at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context) at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context) at Swashbuckle.AspNetCore.SwaggerUI.SwaggerUIMiddleware.Invoke(HttpContext httpContext) at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider) at API.Middleware.ExceptionMiddleware.InvokeAsync(HttpContext context) in /home/joan/e-learning/udemy/reactivities/API/Middleware/ExceptionMiddleware.cs:line 29
+```
+
+##### 151 Enviar la ficha con la petición
+
+Se usan los interceptores de Axios.
+
+```tsx
+axios.interceptors.request.use(config => {
+    const token = store.commonStore.token;
+    if (token) config.headers.Authorization = `Bearer ${token}`
+    return config;
+})
+```
+
+##### 152 Añadir modales
+
+Se crea un almacén específico para controlar la apertura y el cierre de los formularios modales.
+
+Se crea un contenedor de modales basado en el almacén.
+
+Se usa el contenedor de modales en `App`.
+
+Se sustituye el `Link` de la `HomePage` por un `onClick`.
+
+Se cierra el modal después de haber iniciado sesión, en `userStore.ts`.
+
+##### 153 Añadir el formulario de registro
+
+Se crea un nuevo método `register` en el almacén de usuarios, similar al `login`.
+
+Se crea un `RegisterForm` a partir de `LoginForm`, ampliándolo con validaciones.
+
+##### 154 Manipular errores de validación en el formulario de registro
+
+Se va a usar `ValidationErrors`.
+
+Es necesario adaptar la API para evitar el tipo de error que llega como una simple cadena en una `BadRequest`.
+
+```c#
+public async Task<ActionResult<UserDto>> Register(RegisterDto registerDto)
+{
+    if (await _userManager.Users.AnyAsync(u => u.Email == registerDto.Email))
+    {
+        return BadRequest("Email taken");
+    }
+
+    if (await _userManager.Users.AnyAsync(u => u.UserName == registerDto.Username))
+    {
+        return BadRequest("Username taken");
+    }
+```
+
+```c#
+ModelState.AddModelError("email", "Email taken");
+return ValidationProblem(ModelState);
+```
+
+De esta forma conseguimos un método estándar de gestionar los errores en la API.
+
+```json
+{
+    "type": "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+    "title": "One or more validation errors occurred.",
+    "status": 400,
+    "traceId": "00-1741f2b85eeaf444ac806dbf2d68ca68-abd2e7b14789124c-00",
+    "errors": {
+        "email": [
+            "Email taken"
+        ]
+    }
+}
+```
+
+##### 155 Sumario de la sección 13
+
