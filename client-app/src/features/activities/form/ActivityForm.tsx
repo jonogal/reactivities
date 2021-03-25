@@ -32,8 +32,8 @@ export default observer(function ActivityForm() {
     });
 
     const validationSchema = Yup.object({
-        title: Yup.string().required('The activity title is requrired'),
-        description: Yup.string().required('The activity description is requrired'),
+        title: Yup.string().required('The activity title is required'),
+        description: Yup.string().required('The activity description is required'),
         category: Yup.string().required(),
         date: Yup.string().required('Date is required').nullable(),
         city: Yup.string().required(),

@@ -3829,3 +3829,1062 @@ De esta forma conseguimos un método estándar de gestionar los errores en la AP
 
 ##### 155 Sumario de la sección 13
 
+##### Sección 14: Relaciones en `Entity Framework`
+
+##### 156 Introducción
+
+* Relaciones en EF.
+* Cargar entidades relacionadas. Por defecto EF no lo hace.
+* Extensiones consultables `AutoMapper`.
+* Incluir un proyecto de infraestructura.
+
+![156.1](/home/joan/e-learning/udemy/reactivities/doc/images/156.1.png)
+Entidad asociativa.
+
+<img src="/home/joan/e-learning/udemy/reactivities/doc/images/156.2.png" alt="156.2" style="zoom:67%;" />
+Proyecto de infraestructura.
+
+##### 157 Configurar la nueva relación
+
+Se establece la relación `m:n` entre actividades y usuarios.
+
+```c#
+using System;
+using System.Collections.Generic;
+
+namespace Domain
+{
+    public class Activity
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; }
+        public DateTime Date { get; set; }
+        public string Description { get; set; }
+        public string Category { get; set; }
+        public string City { get; set; }
+        public string Venue { get; set; }
+        public ICollection<AppUser> Attendees { get; set; }
+    }
+}
+```
+
+```c#
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Identity;
+
+namespace Domain
+{
+    public class AppUser : IdentityUser
+    {
+        public string  DisplayName { get; set; }
+        public string Bio { get; set; }
+        public ICollection<Activity> Activities { get; set; }
+    }
+}
+```
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations add ActivityAttendee -p Persistence -s API
+```
+
+```c#
+using System;
+using Microsoft.EntityFrameworkCore.Migrations;
+
+namespace Persistence.Migrations
+{
+    public partial class ActivityAttendee : Migration
+    {
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.CreateTable(
+                name: "ActivityAppUser",
+                columns: table => new
+                {
+                    ActivitiesId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    AttendeesId = table.Column<string>(type: "TEXT", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ActivityAppUser", x => new { x.ActivitiesId, x.AttendeesId });
+                    table.ForeignKey(
+                        name: "FK_ActivityAppUser_Activities_ActivitiesId",
+                        column: x => x.ActivitiesId,
+                        principalTable: "Activities",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_ActivityAppUser_AspNetUsers_AttendeesId",
+                        column: x => x.AttendeesId,
+                        principalTable: "AspNetUsers",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ActivityAppUser_AttendeesId",
+                table: "ActivityAppUser",
+                column: "AttendeesId");
+        }
+
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(
+                name: "ActivityAppUser");
+        }
+    }
+}
+
+```
+
+Esta migración finalmente no interesa, porque es necesario añadir más columnas de las que simplemente ha considerado EF.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations remove -p Persistence -s API
+```
+
+Se crea una nueva clase en `Domain`.
+
+```c#
+using System;
+
+namespace Domain
+{
+    public class ActivityAttendee
+    {
+        public string AppUserId { get; set; }
+        public AppUser AppUser { get; set; }
+        public Guid ActivityId { get; set; }
+        public Activity Activity { get; set; }
+        public bool isHost { get; set; } // este asistente particular es el anfitrión de la actividad
+    }
+}
+```
+
+Se modifican las colecciones en ambas clases, `Activity` y `AppUser` para que hagan referencia a la nueva `ActivityAttendee`.
+
+Hay que ajustar `DataContext`.
+
+```c#
+using Domain;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace Persistence
+{
+    public class DataContext : IdentityDbContext<AppUser>
+    {
+        public DataContext(DbContextOptions options) : base(options)
+        {
+        }
+
+        public DbSet<Activity> Activities { get; set; }
+        public DbSet<ActivityAttendee> ActivityAttendees { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+
+            // se define la clave primaria de ActivityAttendee
+            builder.Entity<ActivityAttendee>(x => x.HasKey(aa => new {aa.AppUserId, aa.ActivityId}));
+
+            // dependencia con AppUser y clave extranjera
+            builder.Entity<ActivityAttendee>()
+                .HasOne(u => u.AppUser)
+                .WithMany(a => a.Activities)
+                .HasForeignKey(aa => aa.AppUserId);
+
+            // dependencia con Activity y clave extranjera
+            builder.Entity<ActivityAttendee>()
+                .HasOne(u => u.Activity)
+                .WithMany(a => a.Attendees)
+                .HasForeignKey(aa => aa.ActivityId);
+        }
+    }
+}
+```
+
+```bash
+[joan@alkaid reactivities]$ dotnet tool update --global dotnet-ef
+[joan@alkaid reactivities]$ dotnet ef migrations add ActivityAttendee -p Persistence -s API
+Build started...
+Build succeeded.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Done. To undo this action, use 'ef migrations remove'
+```
+
+```c#
+using System;
+using Microsoft.EntityFrameworkCore.Migrations;
+
+namespace Persistence.Migrations
+{
+    public partial class ActivityAttendee : Migration
+    {
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.CreateTable(
+                name: "ActivityAttendees",
+                columns: table => new
+                {
+                    AppUserId = table.Column<string>(type: "TEXT", nullable: false),
+                    ActivityId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    isHost = table.Column<bool>(type: "INTEGER", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ActivityAttendees", x => new { x.AppUserId, x.ActivityId });
+                    table.ForeignKey(
+                        name: "FK_ActivityAttendees_Activities_ActivityId",
+                        column: x => x.ActivityId,
+                        principalTable: "Activities",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_ActivityAttendees_AspNetUsers_AppUserId",
+                        column: x => x.AppUserId,
+                        principalTable: "AspNetUsers",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ActivityAttendees_ActivityId",
+                table: "ActivityAttendees",
+                column: "ActivityId");
+        }
+
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(
+                name: "ActivityAttendees");
+        }
+    }
+}
+```
+
+##### 158 Añadir un proyecto de infraestructura
+
+Al crear una actividad hay que identificar el usuario que realiza esta acción para incluirlo en la lista de asistentes.
+
+Desde la capa de negocio `Application` no tenemos acceso a `HttpContext` para determinar qué usuario está realizando la petición.
+
+Se podría hacer que desde `API` se pasara el usuario a `Application`, pero esta sería una solución deficiente puesto que genera un acoplamiento excesivo entre las 2 capas.
+
+Es más adecuado disponer de una capa de infraestructura.
+
+```bash
+[joan@alkaid reactivities]$ dotnet new classlib -n Infrastructure
+The template "Class library" was created successfully.
+
+Processing post-creation actions...
+Running 'dotnet restore' on Infrastructure/Infrastructure.csproj...
+  Determining projects to restore...
+  Restored /home/joan/e-learning/udemy/reactivities/Infrastructure/Infrastructure.csproj (in 99 ms).
+Restore succeeded.
+[joan@alkaid reactivities]$ dotnet sln add Infrastructure
+Project `Infrastructure/Infrastructure.csproj` added to the solution.
+[joan@alkaid reactivities]$ cd Infrastructure/
+[joan@alkaid Infrastructure]$ dotnet add reference ../Application/
+Reference `..\Application\Application.csproj` added to the project.
+[joan@alkaid Application]$ cd ..
+[joan@alkaid reactivities]$ cd API/
+[joan@alkaid API]$ dotnet add reference ../Infrastructure/
+Reference `..\Infrastructure\Infrastructure.csproj` added to the project.
+[joan@alkaid API]$ cd ..
+[joan@alkaid reactivities]$ dotnet restore
+  Determining projects to restore...
+  Restored /home/joan/e-learning/udemy/reactivities/Infrastructure/Infrastructure.csproj (in 407 ms).
+  Restored /home/joan/e-learning/udemy/reactivities/API/API.csproj (in 407 ms).
+  3 of 5 projects are up-to-date for restore.
+```
+
+Se crea la carpeta `Application/Interfaces`.
+
+Se crea una nueva interfaz.
+
+```c#
+namespace Application.Interfaces
+{
+    public interface IUserAccessor
+    {
+        string GetUserName();
+    }
+}
+```
+
+Se crea una nueva clase `UserAccessor` en `Infrastructure/Security`.
+
+```c#
+using System.Security.Claims;
+using Application.Interfaces;
+using Microsoft.AspNetCore.Http;
+
+namespace Infrastructure.Security
+{
+    public class UserAccessor : IUserAccessor
+    {
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        public UserAccessor(IHttpContextAccessor httpContextAccessor)
+        {
+            this._httpContextAccessor = httpContextAccessor;
+        }
+
+        public string GetUserName()
+        {
+            return _httpContextAccessor.HttpContext.User.FindFirstValue(ClaimTypes.Name);
+        }
+    }
+}
+```
+
+Para finalizar se añade el acceso al usuario como un servicio.
+
+```c#
+using Application.Activities;
+using Application.Interfaces;
+using Infrastructure.Security;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.OpenApi.Models;
+using Persistence;
+
+namespace API.Extensions
+{
+    public static class ApplicationServicesExtensions
+    {
+        public static IServiceCollection AddApplicationServices(this IServiceCollection services,
+            IConfiguration config)
+        {
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "API", Version = "v1" });
+            });
+            services.AddDbContext<DataContext>(opt =>
+            {
+                opt.UseSqlite(config.GetConnectionString("DefaultConnection"));
+            });
+            services.AddCors(opt =>
+            {
+                opt.AddPolicy("CorsPolicy", policy =>
+                {
+                    policy.AllowAnyMethod().AllowAnyHeader().WithOrigins("http://localhost:3000");
+                });
+            });
+            services.AddMediatR(typeof(List.Handler).Assembly);
+            services.AddAutoMapper(typeof(Application.Core.MappingProfiles).Assembly);
+            services.AddScoped<IUserAccessor, UserAccessor>(); // tenemos acceso al usuario desde cualquier punto de la aplicación
+
+            return services;
+        }
+    }
+}
+```
+
+##### 159 Actualizar el manipulador para crear una actividad
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using Domain;
+using FluentValidation;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class Create
+    {
+        public class Command : IRequest<Result<Unit>>
+        {
+            public Activity Activity { get; set; }
+        }
+
+        public class CommandValidator : AbstractValidator<Command>
+        {
+            public CommandValidator()
+            {
+                RuleFor(x => x.Activity).SetValidator(new ActivityValidator());
+            }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<Unit>>
+        {
+            private readonly DataContext _context;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _context = context;
+            }
+
+            public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var user = await _context.Users.FirstOrDefaultAsync(x => x.UserName == _userAccessor.GetUserName());
+
+                var attendee = new ActivityAttendee
+                {
+                    AppUser = user,
+                    Activity = request.Activity,
+                    isHost = true
+                };
+
+                request.Activity.Attendees.Add(attendee);
+
+                _context.Activities.Add(request.Activity);
+
+                var result = await _context.SaveChangesAsync() > 0;
+
+                if (!result) return Result<Unit>.Failure("Failed to create activity");
+
+                return Result<Unit>.Success(Unit.Value);
+            }
+        }
+    }
+}
+```
+
+##### 160 Probar la creación de una actividad
+
+Revisar el módulo 14 de la colección postman.
+
+El hecho de que la lista de asistentes de una actividad no esté inicializado genera problemas al crear una actividad.
+
+```json
+{
+    "id": "4145a6c6-43fc-4fbc-9309-25be79c79be0",
+    "title": "Past Activity 11",
+    "date": "2021-01-17T13:41:57.043",
+    "description": "Activity 2 months ago",
+    "category": "drinks",
+    "city": "London",
+    "venue": "Pub",
+    "attendees": null
+},
+```
+
+Cuando se soluciona el problema devuelve la lista de asistentes vacía, en la que debería aparecer Bob como anfitrión.
+
+```json
+{
+    "id": "f62bd222-f672-44c7-906f-c4a2119cd4ea",
+    "title": "Test event with bob as host",
+    "date": "2021-04-07T16:48:36.574",
+    "description": "Description of the test event",
+    "category": "drinks",
+    "city": "London",
+    "venue": "London venue",
+    "attendees": []
+}
+```
+
+EF no la hace automáticamente, hay que indicarlo explícitamente aunque exista en la base de datos el registro correspondiente.
+
+```json
+[{
+	"stmt": "SELECT * FROM ActivityAttendees;",
+	"header": ["AppUserId", "ActivityId", "isHost"],
+	"rows": [
+		["fa2273dc-b638-464e-9d34-b0dc111dd09c", "F62BD222-F672-44C7-906F-C4A2119CD4EA", "1"]
+	]
+}]
+```
+
+##### 161 Cargar datos relacionados
+
+https://docs.microsoft.com/en-us/ef/ef6/querying/related-data
+
+Se comentan los 3 métodos de hacerlo. Inicialmente se utilizará `Eagerly Loading`, cargando con ansiedad.
+
+En el manipulador de la lista de actividades
+
+```c#
+public async Task<Result<List<Activity>>> Handle(Query request, CancellationToken cancellationToken)
+{
+    var activities = await _context.Activities
+        .Include(a => a.Attendees)
+        .ThenInclude(u => u.AppUser)
+        .ToListAsync();
+
+    return Result<List<Activity>>.Success(activities);
+}
+```
+
+Provoca un error de este tipo:
+
+```json
+A possible object cycle was detected. This can either be due to a cycle or if the object depth is larger than the maximum allowed depth of 32. Consider using ReferenceHandler.Preserve on JsonSerializerOptions to support cycles.
+```
+
+Una actividad tiene asistentes (usuario) que a su vez asisten a una lista de actividades...
+
+##### 162 Dar forma a los datos relacionados
+
+Se crea un `ActivityDto` y se usa AutoMapper para mover información de una `Activity` a una `ActivityDto`, aunque no termina de funcionar.
+
+```json
+{
+    "id": "f62bd222-f672-44c7-906f-c4a2119cd4ea",
+    "title": "Test event with bob as host",
+    "date": "2021-04-07T16:48:36.574",
+    "description": "Description of the test event",
+    "category": "drinks",
+    "city": "London",
+    "venue": "London venue",
+    "hostUsername": null,
+    "profiles": null
+}
+```
+
+faltan `hostUsername` y `profiles`.
+
+##### 163 Configurar los perfiles de AutoMapper
+
+Se cambia `Profiles` por `Attenddees` en `ActivityDto`.
+
+En `MappingProfiles` se define la correspondencia para `HostUsername`.
+
+```c#
+using System.Linq;
+using Application.Activities;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.isHost).AppUser.UserName));
+        }
+    }
+}
+```
+
+Al lanzar la prueba se produce un error 500, `Error mapping types` de `AutoMapper`.
+
+```bash
+Mapping types:
+      Activity -> ActivityDto
+      Domain.Activity -> Application.Activities.ActivityDto
+      
+      Type Map configuration:
+      Activity -> ActivityDto
+      Domain.Activity -> Application.Activities.ActivityDto
+      
+      Destination Member:
+      Attendees
+            
+       ---> AutoMapper.AutoMapperMappingException: Missing type map configuration or unsupported mapping.
+      
+      Mapping types:
+      ActivityAttendee -> Profile
+```
+
+```c#
+using System.Linq;
+using Application.Activities;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.isHost).AppUser.UserName));
+            CreateMap<ActivityAttendee, Profiles.Profile>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.AppUser.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.AppUser.UserName))
+                .ForMember(d => d.Bio, opt => opt.MapFrom(s => s.AppUser.Bio));
+                // se ignora Image de momento
+        }
+    }
+}
+```
+
+Ahora sí:
+
+```json
+{
+    "id": "f62bd222-f672-44c7-906f-c4a2119cd4ea",
+    "title": "Test event with bob as host",
+    "date": "2021-04-07T16:48:36.574",
+    "description": "Description of the test event",
+    "category": "drinks",
+    "city": "London",
+    "venue": "London venue",
+    "hostUsername": "bob",
+    "attendees": [
+        {
+            "username": "bob",
+            "displayName": "Bob",
+            "bio": null,
+            "image": null
+        }
+    ]
+}
+```
+
+En el terminal vemos que la consulta lanzada no es muy óptima.
+
+```sql
+SELECT a.Id, a.Category, a.City, a.Date, a.Description, a.Title, a.Venue, t.AppUserId, t.ActivityId, t.isHost, t.Id, t.AccessFailedCount, t.Bio, t.ConcurrencyStamp, t.DisplayName, t.Email, t.EmailConfirmed, t.LockoutEnabled, t.LockoutEnd, t.NormalizedEmail, t.NormalizedUserName, t.PasswordHash, t.PhoneNumber, t.PhoneNumberConfirmed, t.SecurityStamp, t.TwoFactorEnabled, t.UserName
+      FROM Activities AS a
+      LEFT JOIN (
+          SELECT a0.AppUserId, a0.ActivityId, a0.isHost, a1.Id, a1.AccessFailedCount, a1.Bio, a1.ConcurrencyStamp, a1.DisplayName, a1.Email, a1.EmailConfirmed, a1.LockoutEnabled, a1.LockoutEnd, a1.NormalizedEmail, a1.NormalizedUserName, a1.PasswordHash, a1.PhoneNumber, a1.PhoneNumberConfirmed, a1.SecurityStamp, a1.TwoFactorEnabled, a1.UserName
+          FROM ActivityAttendees AS a0
+          INNER JOIN AspNetUsers AS a1 ON a0.AppUserId = a1.Id
+      ) AS t ON a.Id = t.ActivityId
+      ORDER BY a.Id, t.AppUserId, t.ActivityId, t.Id
+```
+
+Se están solicitando atributos que no son necesarios. Se plantea la posibilidad de cambiar el método `Eagerly Loading` por `Projection`.
+
+Pasamos de:
+
+```c#
+public async Task<Result<List<ActivityDto>>> Handle(Query request, CancellationToken cancellationToken)
+{
+    var activities = await _context.Activities
+        .Include(a => a.Attendees)
+        .ThenInclude(u => u.AppUser)
+        .ToListAsync();
+
+    var activitiesToReturn = _mapper.Map<List<ActivityDto>>(activities);
+
+    return Result<List<ActivityDto>>.Success(activitiesToReturn);
+}
+```
+
+a usar:
+
+```c#
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using Domain;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class List
+    {
+        public class Query : IRequest<Result<List<ActivityDto>>> { }
+
+        public class Handler : IRequestHandler<Query, Result<List<ActivityDto>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            public Handler(DataContext context, IMapper mapper)
+            {
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<List<ActivityDto>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var activities = await _context.Activities
+                    .ProjectTo<ActivityDto>(_mapper.ConfigurationProvider)
+                    .ToListAsync();
+
+                return Result<List<ActivityDto>>.Success(activities);
+            }
+        }
+    }
+}
+```
+
+que produce:
+
+```sql
+SELECT a1.Category, a1.City, a1.Date, a1.Description, (
+          SELECT a0.UserName
+          FROM ActivityAttendees AS a
+          INNER JOIN AspNetUsers AS a0 ON a.AppUserId = a0.Id
+          WHERE (a1.Id = a.ActivityId) AND a.isHost
+          LIMIT 1), a1.Id, a1.Title, a1.Venue, t.Bio, t.DisplayName, t.Username, t.AppUserId, t.ActivityId, t.Id
+      FROM Activities AS a1
+      LEFT JOIN (
+          SELECT a3.Bio, a3.DisplayName, a3.UserName AS Username, a2.AppUserId, a2.ActivityId, a3.Id
+          FROM ActivityAttendees AS a2
+          INNER JOIN AspNetUsers AS a3 ON a2.AppUserId = a3.Id
+      ) AS t ON a1.Id = t.ActivityId
+      ORDER BY a1.Id, t.AppUserId, t.ActivityId, t.Id
+```
+
+Se procede a hacer lo mismo con el manipulador de `Details` para obtener un `ActivityDto`.
+
+```c#
+public async Task<Result<ActivityDto>> Handle(Query request, CancellationToken cancellationToken)
+{
+    var activity = await _context.Activities
+        .ProjectTo<ActivityDto>(_mapper.ConfigurationProvider)
+        .FirstOrDefaultAsync(x => x.Id == request.Id); // Projection no admite FindAsync
+
+    return Result<ActivityDto>.Success(activity);
+}
+```
+
+##### 164 Añadir el manipulador de asistente
+
+Es necesario determinar si una actividad se ha cancelado. Se añade la propiedad correspondiente en `Activity` y `ActivityDto`.
+
+Esto hace necesaria una nueva migración. Se para la aplicación.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations add AddCancelledProperty -p Persistence -s API
+Build started...
+Build succeeded.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Done. To undo this action, use 'ef migrations remove'
+```
+
+```c#
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using Domain;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class UpdateAttendance
+    {
+        public class Command : IRequest<Result<Unit>>
+        {
+            public Guid Id { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<Unit>>
+        {
+            private readonly DataContext _context;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _context = context;
+            }
+
+            public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var activity = await _context.Activities
+                    .Include(a => a.Attendees).ThenInclude(u => u.AppUser)
+                    .SingleOrDefaultAsync(x => x.Id == request.Id);
+
+                if (activity == null) return null;
+
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(x => x.UserName == _userAccessor.GetUserName());
+                
+                if (user == null) return null;
+
+                var hostUsername = activity.Attendees.FirstOrDefault(x => x.isHost)?.AppUser?.UserName; // de momento hay actividades que no tienen anfitrión
+
+                var attendance = activity.Attendees.FirstOrDefault(x => x.AppUser.UserName == user.UserName);
+
+                if (attendance != null && hostUsername == user.UserName)
+                    activity.IsCancelled = !activity.IsCancelled;
+
+                if (attendance != null && hostUsername != user.UserName)
+                    activity.Attendees.Remove(attendance);
+
+                if (attendance == null)
+                {
+                    attendance = new ActivityAttendee
+                    {
+                        AppUser = user,
+                        Activity = activity,
+                        isHost = false
+                    };
+
+                    activity.Attendees.Add(attendance);
+                }
+
+                var result = await _context.SaveChangesAsync() > 0;
+
+                return result ? Result<Unit>.Success(Unit.Value) : Result<Unit>.Failure("Problem updating attendance");
+            }
+        }
+    }
+}
+```
+
+Se añade un punto final al controlador de actividades para dar acceso a esta funcionalidad.
+
+```c#
+[HttpPost("{id}/attend")]
+public async Task<IActionResult> Attend(Guid id)
+{
+    return HandleResult(await Mediator.Send(new UpdateAttendance.Command { Id = id }));
+}
+```
+
+Pruebas en Postman
+
+1. Login as Tom and save token to env
+2. Update attendance as tom f62bd222-f672-44c7-906f-c4a2119cd4ea Bearer {{tom_token}}
+3. Get Activity Details
+
+```json
+{
+    "id": "f62bd222-f672-44c7-906f-c4a2119cd4ea",
+    "title": "Test event with bob as host",
+    "date": "2021-04-07T16:48:36.574",
+    "description": "Description of the test event",
+    "category": "drinks",
+    "city": "London",
+    "venue": "London venue",
+    "hostUsername": "bob",
+    "isCancelled": false,
+    "attendees": [
+        {
+            "username": "tom",
+            "displayName": "Tom",
+            "bio": null,
+            "image": null
+        },
+        {
+            "username": "bob",
+            "displayName": "Bob",
+            "bio": null,
+            "image": null
+        }
+    ]
+}
+```
+
+4. Update attendance as tom (se elimina de la lista de asistentes)
+5. Cancel activity by host (x2)
+
+##### 165 Añadir una política `auth` personalizada
+
+Con el objetivo de que *sólo el anfitrión de la actividad pueda editar una actividad*.
+
+```c#
+using System;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Persistence;
+
+namespace Infrastructure.Security
+{
+    public class IsHostRequirement : IAuthorizationRequirement
+    {
+
+    }
+
+    public class IsHostRequirementHandler : AuthorizationHandler<IsHostRequirement>
+    {
+        private readonly DataContext _dataContext;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        public IsHostRequirementHandler(DataContext dataContext, IHttpContextAccessor httpContextAccessor)
+        {
+            _httpContextAccessor = httpContextAccessor;
+            _dataContext = dataContext;
+        }
+
+        protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, IsHostRequirement requirement)
+        {
+            var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (userId == null) return Task.CompletedTask; // no está autorizado
+
+            var activityId = Guid.Parse(_httpContextAccessor.HttpContext?.Request.RouteValues
+                .SingleOrDefault(x => x.Key == "id").Value?.ToString());
+
+            var attendee = _dataContext.ActivityAttendees.FindAsync(userId, activityId).Result;
+
+            if (attendee == null) return Task.CompletedTask; // no está autorizado
+
+            if (attendee.isHost) context.Succeed(requirement);
+
+            return Task.CompletedTask; // está autorizado
+        }
+    }
+}
+```
+
+Se registra en las extensiones del servicio de identidad.
+
+```c#
+using System.Text;
+using API.Services;
+using Domain;
+using Infrastructure.Security;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
+using Persistence;
+
+namespace API.Extensions
+{
+    public static class IdentityServiceExtensions
+    {
+        public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration config)
+        {
+            services.AddIdentityCore<AppUser>(opt =>
+            {
+                // Identity utiliza unas opciones por defecto que se pueden configurar. Por ejemplo:
+                opt.Password.RequireNonAlphanumeric = false;
+            })
+            .AddEntityFrameworkStores<DataContext>()
+            .AddSignInManager<SignInManager<AppUser>>();
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["TokenKey"]));
+
+            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(opt =>
+                {
+                    opt.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuerSigningKey = true,
+                        IssuerSigningKey = key,
+                        ValidateIssuer = false,
+                        ValidateAudience = false
+                    };
+                });
+            // +++ IsHostPolicy
+            services.AddAuthorization(opt => {
+                opt.AddPolicy("IsActivityHost", policy => {
+                    policy.Requirements.Add(new IsHostRequirement())
+                });
+            });
+            services.AddTransient<IAuthorizationHandler, IsHostRequirementHandler>();
+            // --- IsHostPolicy
+            services.AddScoped<TokenService>();
+
+            return services;
+        }
+    }
+}
+```
+
+La política se aplica a los puntos finales del controlador.
+
+```c#
+[Authorize(Policy = "IsActivityHost")]
+[HttpPut("{id}")]
+public async Task<IActionResult> EditActivity(Guid id, Activity activity)
+{
+    activity.Id = id;
+    return HandleResult(await Mediator.Send(new Edit.Command { Activity = activity }));
+}
+
+[Authorize(Policy = "IsActivityHost")]
+[HttpDelete("{id}")]
+public async Task<IActionResult> DeleteActivity(Guid id)
+{
+    return HandleResult(await Mediator.Send(new Delete.Command { Id = id }));
+}
+```
+
+La prueba `Edit an Activity as Bob who is host` provoca que limpia la lista de asistentes de la actividad y se queda sin anfitrión. Se ha introducido un bug.
+
+##### 166 Resolviendo el bug con en manipulador de edición
+
+Comentando la política en el punto final se puede comprobar que es el motivo de que editar una actividad no funcione correctamente.
+
+```c#
+using System;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Infrastructure.Security
+{
+    public class IsHostRequirement : IAuthorizationRequirement
+    {
+
+    }
+
+    public class IsHostRequirementHandler : AuthorizationHandler<IsHostRequirement>
+    {
+        private readonly DataContext _dataContext;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        public IsHostRequirementHandler(DataContext dataContext, IHttpContextAccessor httpContextAccessor)
+        {
+            _httpContextAccessor = httpContextAccessor;
+            _dataContext = dataContext;
+        }
+
+        protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, IsHostRequirement requirement)
+        {
+            var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (userId == null) return Task.CompletedTask; // no está autorizado
+
+            var activityId = Guid.Parse(_httpContextAccessor.HttpContext?.Request.RouteValues
+                .SingleOrDefault(x => x.Key == "id").Value?.ToString());
+
+            // se recupera en memoria y en la operación de edición no se actualiza
+            var attendee = _dataContext.ActivityAttendees
+                .AsNoTracking() // soluciona el problema, pero no funciona con el método FindAsync
+                .SingleOrDefaultAsync(x => x.AppUserId == userId && x.ActivityId == activityId)
+                .Result;
+
+            if (attendee == null) return Task.CompletedTask; // no está autorizado
+
+            if (attendee.isHost) context.Succeed(requirement);
+
+            return Task.CompletedTask; // está autorizado
+        }
+    }
+}
+```
+
+##### 167 Actualizar la semilla de datos
+
+Para que todas las actividades tengan un anfitrión.
+
+`StuddentAssents/snippets/SeedData with attendees.txt` sustituye la definición de `Seed`.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef database drop -p Persistence -s API
+Build started...
+Build succeeded.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Are you sure you want to drop the database 'main' on server 'reactivities.db'? (y/N)
+y
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Dropping database 'main' on server 'reactivities.db'.
+Successfully dropped database 'main'.
+```
+

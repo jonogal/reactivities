@@ -54,7 +54,7 @@ namespace API.Controllers
 
             if (await _userManager.Users.AnyAsync(u => u.UserName == registerDto.Username))
             {
-                ModelState.AddModelError("userbame", "Username taken");
+                ModelState.AddModelError("username", "Username taken");
                 return ValidationProblem(ModelState);
             }
 
