@@ -3829,7 +3829,7 @@ De esta forma conseguimos un método estándar de gestionar los errores en la AP
 
 ##### 155 Sumario de la sección 13
 
-##### Sección 14: Relaciones en `Entity Framework`
+#### Sección 14: Relaciones en `Entity Framework`
 
 ##### 156 Introducción
 
@@ -4254,7 +4254,7 @@ namespace Application.Activities
 
 Revisar el módulo 14 de la colección postman.
 
-El hecho de que la lista de asistentes de una actividad no esté inicializado genera problemas al crear una actividad.
+El hecho de que la lista de asistentes de una actividad no esté inicializado genera problemas al crear una actividad, al ser nula.
 
 ```json
 {
@@ -4284,7 +4284,7 @@ Cuando se soluciona el problema devuelve la lista de asistentes vacía, en la qu
 }
 ```
 
-EF no la hace automáticamente, hay que indicarlo explícitamente aunque exista en la base de datos el registro correspondiente.
+EF no la hace automáticamente, hay que indicarlo explícitamente, aunque exista en la base de datos el registro correspondiente.
 
 ```json
 [{
@@ -4326,7 +4326,7 @@ Una actividad tiene asistentes (usuario) que a su vez asisten a una lista de act
 
 ##### 162 Dar forma a los datos relacionados
 
-Se crea un `ActivityDto` y se usa AutoMapper para mover información de una `Activity` a una `ActivityDto`, aunque no termina de funcionar.
+Se crea un `ActivityDto` y se usa **`AutoMapper`** para mover información de una `Activity` a una `ActivityDto`, aunque no termina de funcionar.
 
 ```json
 {
@@ -4344,7 +4344,7 @@ Se crea un `ActivityDto` y se usa AutoMapper para mover información de una `Act
 
 faltan `hostUsername` y `profiles`.
 
-##### 163 Configurar los perfiles de AutoMapper
+##### 163 Configurar los perfiles de `AutoMapper`
 
 Se cambia `Profiles` por `Attenddees` en `ActivityDto`.
 
@@ -4888,3 +4888,718 @@ Dropping database 'main' on server 'reactivities.db'.
 Successfully dropped database 'main'.
 ```
 
+##### 168 Sumario de la sección 14
+
+#### Sección 15: Característica - asistencia en la parte de cliente
+
+##### 169 Introducción
+
+##### 170 Añadir el componente de asistentes
+
+Para mostrar la lista de asistentes a una actividad.
+
+Se monta un ejemplo del componente que se añade a `ActivityListItem`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Image, List } from 'semantic-ui-react';
+
+export default observer(function ActivityListItemAttendee() {
+    return (
+        <List horizontal>
+            <List.Item>
+                <Image size='mini' circular src='/assets/user.png' />
+            </List.Item>
+            <List.Item>
+                <Image size='mini' circular src='/assets/user.png' />
+            </List.Item>
+            <List.Item>
+                <Image size='mini' circular src='/assets/user.png' />
+            </List.Item>
+        </List>
+    )
+})
+```
+
+Se crea un modelo para el perfil de un asistente que se incluye al modelo de actividad, además de resto de atributos que definen la actividad. Los nuevos, de momento se declaran opcionales.
+
+```tsx
+import { Profile } from "./profile";
+
+export interface Activity {
+    id: string;
+    title: string;
+    date: Date | null;
+    description: string;
+    category: string;
+    city: string;
+    venue: string;
+    hostUsername?: string;
+    isCancelled?: boolean;
+    attendees?: Profile[];
+}
+```
+
+El componente finalmente queda de esta forma.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Image, List } from 'semantic-ui-react';
+import { Profile } from '../../../app/models/profile';
+
+interface Props {
+    attendees: Profile[];
+}
+
+export default observer(function ActivityListItemAttendee({ attendees }: Props) {
+    return (
+        <List horizontal>
+            {attendees.map(attendee => (
+                <List.Item key={attendee.username} as={Link} to={`/profiles/${attendee.username}`}>
+                    <Image size='mini' circular src={attendee.image || '/assets/user.png'} />
+                </List.Item>
+            ))}
+        </List>
+    )
+})
+```
+
+##### 171 Actualizar el componente de detalles de una actividad
+
+```tsx
+import React from 'react'
+import { Segment, List, Label, Item, Image } from 'semantic-ui-react'
+import { Link } from 'react-router-dom'
+import { observer } from 'mobx-react-lite'
+import { Profile } from '../../../app/models/profile'
+
+interface Props {
+    attendees: Profile[];
+}
+
+export default observer(function ActivityDetailedSidebar({ attendees }: Props) {
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                style={{ border: 'none' }}
+                attached='top'
+                secondary
+                inverted
+                color='teal'
+            >
+                {attendees.length} {attendees.length === 1 ? 'Person' : 'People'} going
+            </Segment>
+            <Segment attached>
+                <List relaxed divided>
+                    {attendees.map(attendee => (
+                        <Item style={{ position: 'relative' }} key={attendee.username}>
+                            <Label
+                                style={{ position: 'absolute' }}
+                                color='orange'
+                                ribbon='right'
+                            >
+                                Host
+                            </Label>
+                            <Image size='tiny' src={attendee.image || '/assets/user.png'} />
+                            <Item.Content verticalAlign='middle'>
+                                <Item.Header as='h3'>
+                                    <Link to={`/profiles/${attendee.username}`}>{attendee.displayName}</Link>
+                                </Item.Header>
+                                <Item.Extra style={{ color: 'orange' }}>Following</Item.Extra>
+                            </Item.Content>
+                        </Item>
+                    ))}
+                </List>
+            </Segment>
+        </>
+
+    )
+})
+```
+
+##### 172 Mostrar condicionalmente los botones
+
+Se añaden atributos a la interfaz `Activitity` para controlar estados.
+
+```tsx
+import { Profile } from "./profile";
+
+export interface Activity {
+    id: string;
+    title: string;
+    date: Date | null;
+    description: string;
+    category: string;
+    city: string;
+    venue: string;
+    hostUsername?: string;
+    isCancelled?: boolean;
+    isGoing?: boolean;
+    isHost?: boolean;
+    host?: Profile;
+    attendees?: Profile[];
+}
+```
+
+Hay que adaptar el método `setActivity(Activity)` del almacén de actividades.
+
+```tsx
+private setActivity = (activity: Activity) => {
+    const user = store.userStore.user; // se obtiene el usuario
+    if (user) {
+        activity.isGoing = activity.attendees?.some(
+            a => a.username === user.username
+        )
+        activity.isHost = activity.hostUsername === user.username;
+        activity.host = activity.attendees?.find(x => x.username === activity.hostUsername);
+    }
+    activity.date = new Date(activity.date!);
+    this.activityRegistry.set(activity.id, activity);
+}
+```
+
+Se modifica `ActivityListItem`.
+
+```tsx
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Button, Icon, Item, Label, Segment } from 'semantic-ui-react';
+import { Activity } from '../../../app/models/activity';
+import { format } from 'date-fns';
+import ActivityListItemAttendee from './ActivityListItemAttendee';
+
+interface Props {
+    activity: Activity
+}
+
+export default function ActivityListItem({ activity }: Props) {
+    return (
+        <Segment.Group>
+            <Segment>
+                <Item.Group>
+                    <Item>
+                        <Item.Image size='tiny' circular src='/assets/user.png' />
+                        <Item.Content>
+                            <Item.Header as={Link} to={`/activities/${activity.id}`}>
+                                {activity.title}
+                            </Item.Header>
+                            <Item.Description>Hosted by {activity.host?.displayName}</Item.Description>
+                            {activity.isHost && (
+                                <Item.Description>
+                                    <Label basic color='orange'>
+                                        You are hosting this activity
+                                    </Label>
+                                </Item.Description>
+                            )}
+                            {activity.isGoing && !activity.isHost && (
+                                <Item.Description>
+                                    <Label basic color='green'>
+                                        You are going to this activity
+                                    </Label>
+                                </Item.Description>
+                            )}
+                        </Item.Content>
+                    </Item>
+                </Item.Group>
+            </Segment>
+            <Segment>
+                <span>
+                    <Icon name='clock' /> {format(activity.date!, 'dd MMM yyyy h:mm aa')}
+                    <Icon name='marker' /> {activity.venue}
+                </span>
+            </Segment>
+            <Segment>
+                <ActivityListItemAttendee attendees={activity.attendees!} />
+            </Segment>
+            <Segment clearing>
+                <span>{activity.description}</span>
+                <Button
+                    as={Link}
+                    to={`/activities/${activity.id}`}
+                    color='teal'
+                    floated='right'
+                    content='View'
+                />
+            </Segment>
+        </Segment.Group>
+    );
+}
+```
+
+Se modifica `ActivityDetailHeader`.
+
+Botones mostrados condicionalmente.
+
+Antes.
+
+```tsx
+<Segment clearing attached='bottom'>
+    <Button color='teal'>Join Activity</Button>
+    <Button>Cancel attendance</Button>
+    <Button as={Link} to={`/manage/${activity.id}`} color='orange' floated='right'>
+        Manage Event
+    </Button>
+</Segment>
+```
+
+Después.
+
+```tsx
+<Segment clearing attached='bottom'>
+    {activity.isHost ? (
+        <Button as={Link} to={`/manage/${activity.id}`} color='orange' floated='right'>
+            Manage Event
+        </Button>
+    ) : activity.isGoing ? (
+        <Button>Cancel attendance</Button>
+    ) : (
+        <Button color='teal'>Join Activity</Button>
+    )}
+</Segment>
+```
+
+Se modifica `ActivityDetailSidebar`.
+
+En lugar de pasar la lista de asistentes se le pasa la actividad, en la interfaz `Props`. Se condiciona mostrar la etiqueta `Host`.
+
+##### 173 Añadir los métodos de almacén para asistir
+
+Se comienza por `agent.ts`.
+
+```tsx
+const Activities = {
+    list: () => requests.get<Activity[]>('/activities'),
+    details: (id: string) => requests.get<Activity>(`/activities/${id}`),
+    create: (activity: Activity) => requests.post<void>('/activities', activity),
+    update: (activity: Activity) => requests.put<void>(`/activities/${activity.id}`, activity),
+    delete: (id: string) => requests.del<void>(`/activities/${id}`),
+    attend: (id: string) => requests.post<void>(`/activities/${id}/attend`, {})
+}
+```
+
+Se continúa con el almacén de actividades. Para asignar un perfil a un nuevo asistente se define una clase x en `profile.ts`.
+
+```tsx
+updateAttendance = async () => {
+    const user = store.userStore.user;
+    this.loading = true;
+    try {
+        await agent.Activities.attend(this.selectedActivity!.id);
+        runInAction(() => {
+            if (this.selectedActivity?.isGoing) {
+                this.selectedActivity.attendees =
+                    this.selectedActivity.attendees?.filter(a => a.username !== user?.username);
+                this.selectedActivity.isGoing = false;
+            } else {
+                const attendee = new Profile(user!);
+                this.selectedActivity?.attendees?.push(attendee);
+                this.selectedActivity!.isGoing = true;
+            }
+            this.activityRegistry.set(this.selectedActivity!.id, this.selectedActivity!);
+        })
+    } catch (error) {
+        console.log(error);
+    } finally {
+        runInAction(() => { this.loading = false; })
+    }
+}
+```
+
+Se modifica `ActivityDetailHeader` para utilizar esta funcionalidad.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react'
+import { Link } from 'react-router-dom';
+import { Button, Header, Item, Segment, Image } from 'semantic-ui-react'
+import { Activity } from "../../../app/models/activity";
+import { format } from 'date-fns'
+import { useStore } from '../../../app/stores/store';
+
+const activityImageStyle = {
+    filter: 'brightness(30%)'
+};
+
+const activityImageTextStyle = {
+    position: 'absolute',
+    bottom: '5%',
+    left: '5%',
+    width: '100%',
+    height: 'auto',
+    color: 'white'
+};
+
+interface Props {
+    activity: Activity
+}
+
+export default observer(function ActivityDetailedHeader({ activity }: Props) {
+    const {activityStore: {updateAttendance, loading}} = useStore();
+
+    return (
+        <Segment.Group>
+            <Segment basic attached='top' style={{ padding: '0' }}>
+                <Image src={`/assets/categoryImages/${activity.category}.jpg`} fluid style={activityImageStyle} />
+                <Segment style={activityImageTextStyle} basic>
+                    <Item.Group>
+                        <Item>
+                            <Item.Content>
+                                <Header
+                                    size='huge'
+                                    content={activity.title}
+                                    style={{ color: 'white' }}
+                                />
+                                <p>{format(activity.date!, 'dd MMM yyyy')}</p>
+                                <p>
+                                    Hosted by <strong><Link to={`/profiles/${activity.host?.username}`}>{activity.host?.displayName}</Link></strong>
+                                </p>
+                            </Item.Content>
+                        </Item>
+                    </Item.Group>
+                </Segment>
+            </Segment>
+            <Segment clearing attached='bottom'>
+                {activity.isHost ? (
+                    <Button as={Link} to={`/manage/${activity.id}`} color='orange' floated='right'>
+                        Manage Event
+                    </Button>
+                ) : activity.isGoing ? (
+                    <Button loading={loading} onClick={updateAttendance}>Cancel attendance</Button>
+                ) : (
+                    <Button loading={loading} onClick={updateAttendance} color='teal'>Join Activity</Button>
+                )}
+            </Segment>
+        </Segment.Group>
+    )
+})
+```
+
+##### 174 Actualizar los métodos para crear y editar
+
+Se hacen obligatorios todos los atributos de `Activity` excepto `host`. Se crea la clase `ActivityFormValues` con los valores iniciales de una actividad.
+
+Se actualiza `ActivityForm`.
+
+Se actualiza el almacén de actividades.
+
+Antes.
+
+```tsx
+createActivity = async (activity: Activity) => {
+    this.loading = true;
+    try {
+        await agent.Activities.create(activity);
+        runInAction(() => {
+            //this.activities.push(activity);
+            this.activityRegistry.set(activity.id, activity);
+            this.selectedActivity = activity;
+            this.editMode = false;
+            this.loading = false;
+        })
+    } catch (error) {
+        console.log(error);
+        runInAction(() => {
+            this.loading = false;
+        })
+    }
+}
+```
+
+Supone a la vez adaptar los métodos en `agent.ts`. Crear una clase `Activity`.
+
+Después.
+
+```tsx
+createActivity = async (activity: ActivityFormValues) => {
+    const user = store.userStore.user;
+    const attendee = new Profile(user!);
+    try {
+        await agent.Activities.create(activity);
+        const newActivity = new Activity(activity);
+        newActivity.hostUsername = user!.username;
+        newActivity.attendees = [attendee];
+        this.setActivity(newActivity);
+        runInAction(() => {
+            this.selectedActivity = newActivity;
+        })
+    } catch (error) {
+        console.log(error);
+    }
+}
+```
+
+Lo mismo para `updateActivity`.
+
+```tsx
+updateActivity = async (activity: ActivityFormValues) => {
+    try {
+        await agent.Activities.update(activity);
+        runInAction(() => {
+            if (activity.id) {
+                let updatedActivity = {...this.getActivity(activity.id), ...activity}
+                this.activityRegistry.set(activity.id, updatedActivity as Activity);
+                this.selectedActivity = updatedActivity as Activity;
+            }                
+        })
+    } catch (error) {
+        console.log(error);
+    }
+}
+```
+
+##### 175 Añadir un método para cancelar una actividad
+
+Se modifica el almacén de actividades.
+
+```tsx
+cancelActivityToggle = async () => {
+    this.loading = true;
+    try {
+        await agent.Activities.attend(this.selectedActivity!.id);
+        runInAction(() => {
+            this.selectedActivity!.isCancelled = !this.selectedActivity?.isCancelled;
+            this.activityRegistry.set(this.selectedActivity!.id, this.selectedActivity!);
+        })
+    } catch (error) {
+        console.log(error);
+    } finally {
+        runInAction(() => { this.loading = false });
+    }
+}
+```
+
+Se modifica `ActivityDetailedHeader`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react'
+import { Link } from 'react-router-dom';
+import { Button, Header, Item, Segment, Image, Label } from 'semantic-ui-react'
+import { Activity } from "../../../app/models/activity";
+import { format } from 'date-fns'
+import { useStore } from '../../../app/stores/store';
+
+const activityImageStyle = {
+    filter: 'brightness(30%)'
+};
+
+const activityImageTextStyle = {
+    position: 'absolute',
+    bottom: '5%',
+    left: '5%',
+    width: '100%',
+    height: 'auto',
+    color: 'white'
+};
+
+interface Props {
+    activity: Activity
+}
+
+export default observer(function ActivityDetailedHeader({ activity }: Props) {
+    const { activityStore: { updateAttendance, loading, cancelActivityToggle } } = useStore();
+
+    return (
+        <Segment.Group>
+            <Segment basic attached='top' style={{ padding: '0' }}>
+                {activity.isCancelled &&
+                    <Label style={{ position: 'absolute', zIndex: 1000, left: -14, top: 20 }}
+                        ribbon color='red' content='Cancelled' />
+                }
+                <Image src={`/assets/categoryImages/${activity.category}.jpg`} fluid style={activityImageStyle} />
+                <Segment style={activityImageTextStyle} basic>
+                    <Item.Group>
+                        <Item>
+                            <Item.Content>
+                                <Header
+                                    size='huge'
+                                    content={activity.title}
+                                    style={{ color: 'white' }}
+                                />
+                                <p>{format(activity.date!, 'dd MMM yyyy')}</p>
+                                <p>
+                                    Hosted by <strong><Link to={`/profiles/${activity.host?.username}`}>{activity.host?.displayName}</Link></strong>
+                                </p>
+                            </Item.Content>
+                        </Item>
+                    </Item.Group>
+                </Segment>
+            </Segment>
+            <Segment clearing attached='bottom'>
+                {activity.isHost ? (
+                    <>
+                        <Button
+                            color={activity.isCancelled ? 'green' : 'red'}
+                            floated='left'
+                            basic
+                            content={activity.isCancelled ? 'Re-activate Activity' : 'Cancel Activity'}
+                            onClick={cancelActivityToggle}
+                            loading={loading}
+                        />
+                        <Button as={Link}
+                            disabled={activity.isCancelled}
+                            to={`/manage/${activity.id}`}
+                            color='orange'
+                            floated='right'>
+                                Manage Event
+                        </Button>
+                    </>
+                ) : activity.isGoing ? (
+                    <Button loading={loading} onClick={updateAttendance}>Cancel attendance</Button>
+                ) : (
+                    <Button disabled={activity.isCancelled}
+                        loading={loading}
+                        onClick={updateAttendance}
+                        color='teal'>
+                            Join Activity
+                    </Button>
+                )}
+            </Segment>
+        </Segment.Group>
+    )
+})
+```
+
+Se modifica `ActivityListItem`.
+
+```tsx
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Button, Icon, Item, Label, Segment } from 'semantic-ui-react';
+import { Activity } from '../../../app/models/activity';
+import { format } from 'date-fns';
+import ActivityListItemAttendee from './ActivityListItemAttendee';
+
+interface Props {
+    activity: Activity
+}
+
+export default function ActivityListItem({ activity }: Props) {
+    return (
+        <Segment.Group>
+            <Segment>
+                {activity.isCancelled &&
+                    <Label attached='top' color='red' content='Cancelled' style={{textAling: 'center'}} />
+                }
+                <Item.Group>
+                    <Item>
+                        <Item.Image size='tiny' circular src='/assets/user.png' />
+                        <Item.Content>
+                            <Item.Header as={Link} to={`/activities/${activity.id}`}>
+                                {activity.title}
+                            </Item.Header>
+                            <Item.Description>Hosted by {activity.host?.displayName}</Item.Description>
+                            {activity.isHost && (
+                                <Item.Description>
+                                    <Label basic color='orange'>
+                                        You are hosting this activity
+                                    </Label>
+                                </Item.Description>
+                            )}
+                            {activity.isGoing && !activity.isHost && (
+                                <Item.Description>
+                                    <Label basic color='green'>
+                                        You are going to this activity
+                                    </Label>
+                                </Item.Description>
+                            )}
+                        </Item.Content>
+                    </Item>
+                </Item.Group>
+            </Segment>
+            <Segment>
+                <span>
+                    <Icon name='clock' /> {format(activity.date!, 'dd MMM yyyy h:mm aa')}
+                    <Icon name='marker' /> {activity.venue}
+                </span>
+            </Segment>
+            <Segment>
+                <ActivityListItemAttendee attendees={activity.attendees!} />
+            </Segment>
+            <Segment clearing>
+                <span>{activity.description}</span>
+                <Button
+                    as={Link}
+                    to={`/activities/${activity.id}`}
+                    color='teal'
+                    floated='right'
+                    content='View'
+                />
+            </Segment>
+        </Segment.Group>
+    );
+}
+```
+
+##### 176 Añadir una ficha flotante para los asistentes
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Card, Icon, Image } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileCard({ profile }: Props) {
+    return (
+        <Card as={Link} to={`/profiles/${profile.username}`}>
+            <Image src={profile.image || '/assets/user.png'} />
+            <Card.Content>
+                <Card.Header>{profile.displayName}</Card.Header>
+                <Card.Description>Bio goes here</Card.Description>
+            </Card.Content>
+            <Card.Content extra>
+                <Icon name='user' />
+            20 followers
+        </Card.Content>
+        </Card>
+    )
+})
+```
+
+Se modifica `ActivityListItemAttendee`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Image, List, Popup } from 'semantic-ui-react';
+import { Profile } from '../../../app/models/profile';
+import ProfileCard from '../../profiles/ProfileCard';
+
+interface Props {
+    attendees: Profile[];
+}
+
+export default observer(function ActivityListItemAttendee({ attendees }: Props) {
+    return (
+        <List horizontal>
+            {attendees.map(attendee => (
+                <Popup
+                    hoverable
+                    key={attendee.username}
+                    trigger={
+                        <List.Item key={attendee.username} as={Link} to={`/profiles/${attendee.username}`}>
+                            <Image size='mini' circular src={attendee.image || '/assets/user.png'} />
+                        </List.Item>
+                    }
+                >
+                    <Popup.Content>
+                        <ProfileCard profile={attendee} />
+                    </Popup.Content>
+                </Popup>
+            ))}
+        </List>
+    )
+})
+```
+
+##### 177 Sumario de la sección 15
