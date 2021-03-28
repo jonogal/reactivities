@@ -5603,3 +5603,795 @@ export default observer(function ActivityListItemAttendee({ attendees }: Props) 
 ```
 
 ##### 177 Sumario de la sección 15
+
+#### Sección 17: Carga de imágenes en la API
+
+##### 178 Introducción
+
+- Opciones de almacenaje de fotos
+  - Base de datos
+  - Sistema de archivos
+  - Servicio de nube
+
+- Añadir un servicio de carga de fotos
+
+- Utilizar la API de Cloudinary
+
+![Architecture](/home/joan/e-learning/udemy/reactivities/doc/images/178.1.png)
+
+De esta forma la aplicación no tiene porqué saber dónde se alojan las imágenes. Sólo necesita obtener el URL de acceso para guardarlo en la base de datos.
+
+<img src="/home/joan/e-learning/udemy/reactivities/doc/images/178.2.png" style="zoom: 80%;" />
+
+##### 179 Añadir Cloudinary
+
+Empezamos por configurar Cloudinary en nuestra aplicación.
+
+```bash
+dotnet add /home/joan/e-learning/udemy/reactivities/Infrastructure/Infrastructure.csproj package CloudinaryDotNet -v 1.15.1 -s https://api.nuget.org/v3/index.json
+```
+
+Las claves de configuración se registran en `appsettings.json.`
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Warning",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  },
+  "AllowedHosts": "*",
+  "Cloudinary": {
+    "CloudName": "alkaidpmi",
+    "ApiKey": "649628228889621",
+    "ApiSecret": "***"
+  }
+}
+
+```
+
+Se crea la clase `CloudinarySettings`.
+
+```c#
+namespace Infrastructure.Photos
+{
+    public class CloudinarySettings
+    {
+        public string CloudName { get; set; }
+        public string ApiKey { get; set; }
+        public string ApiSecret { get; set; }
+    }
+}
+```
+
+Se da acceso a la configuración desde `Startup`, en `ApplicationServiceExtensions`.
+
+```c#
+services.AddMediatR(typeof(List.Handler).Assembly);
+services.AddAutoMapper(typeof(Application.Core.MappingProfiles).Assembly);
+services.AddScoped<IUserAccessor, UserAccessor>();
+services.Configure<CloudinarySettings>(config.GetSection("Cloudinary")); // genial!
+```
+
+##### 180 Añadir las interfaces de Cloudinary
+
+Se crea `PhotoUploadResult`.
+
+```c#
+namespace Application.Photos
+{
+    public class PhotoUploadResult
+    {
+        public string PublicId { get; set; }
+        public string Url { get; set; }
+    }
+}
+```
+
+Se crea la interfaz `IPhotoAccesor`.
+
+```c#
+using System.Threading.Tasks;
+using Application.Photos;
+using Microsoft.AspNetCore.Http;
+
+namespace Application.Interfaces
+{
+    public interface IPhotoAccessor
+    {
+        Task<PhotoUploadResult> AddPhoto(IFormFile file);
+        Task<string> DeletePhoto(string publicId);
+    }
+}
+```
+
+Se crea la clase PhotoAccessor.
+
+```c#
+using System.Threading.Tasks;
+using Application.Interfaces;
+using Application.Photos;
+using Microsoft.AspNetCore.Http;
+
+namespace Infrastructure.Photos
+{
+    public class PhotoAccessor : IPhotoAccessor
+    {
+        public Task<PhotoUploadResult> AddPhoto(IFormFile file)
+        {
+            throw new System.NotImplementedException();
+        }
+
+        public Task<string> DeletePhoto(string publicId)
+        {
+            throw new System.NotImplementedException();
+        }
+    }
+}
+```
+
+Se crea un nuevo servicio en `ApplicationServiceExtensions`.
+
+```c#
+services.AddMediatR(typeof(List.Handler).Assembly);
+services.AddAutoMapper(typeof(Application.Core.MappingProfiles).Assembly);
+services.AddScoped<IUserAccessor, UserAccessor>();
+services.AddScoped<IPhotoAccessor, PhotoAccessor>(); // nuevo servicio
+services.Configure<CloudinarySettings>(config.GetSection("Cloudinary"));
+```
+
+##### 181 Añadir la lógica de foto
+
+Desarrollada en `PhotoAccessor`.  Es necesario acceder a la configuración de Cloudinary.
+
+```c#
+using System;
+using System.Threading.Tasks;
+using Application.Interfaces;
+using Application.Photos;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
+
+namespace Infrastructure.Photos
+{
+    public class PhotoAccessor : IPhotoAccessor
+    {
+        private readonly Cloudinary _cloudinary;
+        public PhotoAccessor(IOptions<CloudinarySettings> config)
+        {
+            var account = new Account(
+                config.Value.CloudName,
+                config.Value.ApiKey,
+                config.Value.ApiSecret
+            );
+            _cloudinary = new Cloudinary(account);
+        }
+
+        public async Task<PhotoUploadResult> AddPhoto(IFormFile file)
+        {
+            if (file.Length > 0)
+            {
+                await using var stream = file.OpenReadStream();
+                var uploadParams = new ImageUploadParams
+                {
+                    File = new FileDescription(file.FileName, stream),
+                    Transformation = new Transformation().Height(500).Width(500).Crop("fill") // Cuadrada
+                };
+
+                var uploadResult = await _cloudinary.UploadAsync(uploadParams);
+
+                if (uploadResult.Error != null)
+                {
+                    throw new Exception(uploadResult.Error.Message);
+                }
+
+                return new PhotoUploadResult
+                {
+                    PublicId = uploadResult.PublicId,
+                    Url = uploadResult.SecureUrl.ToString()
+                };
+            }
+
+            return null;
+        }
+
+        public async Task<string> DeletePhoto(string publicId)
+        {
+            var deleteParams = new DeletionParams(publicId);
+            var result = await _cloudinary.DestroyAsync(deleteParams);
+            return result.Result == "ok" ? result.Result : null;
+        }
+    }
+}
+```
+
+##### 182 Añadir la entidad Foto
+
+Se pasa a desarrollar la lógica de la aplicación.
+
+Se crea la clase `Photo`.
+
+```c#
+namespace Domain
+{
+    public class Photo
+    {
+        public string Id { get; set; }
+        public string Url { get; set; }
+        public bool IsMain { get; set; }
+    }
+}
+```
+
+Se ajusta la clase `AppUser` para incluir la lista de fotos de un usuario.
+
+```c#
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Identity;
+
+namespace Domain
+{
+    public class AppUser : IdentityUser
+    {
+        public string  DisplayName { get; set; }
+        public string Bio { get; set; }
+        public ICollection<ActivityAttendee> Activities { get; set; }
+        public ICollection<Photo> Photos { get; set; }
+    }
+}
+```
+
+Se añade la colección en `DataContext`.
+
+```c#
+public DbSet<Activity> Activities { get; set; }
+public DbSet<ActivityAttendee> ActivityAttendees { get; set; }
+public DbSet<Photo> Photos { get; set; } // colección de fotos
+```
+
+Se crea una nueva migración.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations add PhotoEntityAdded -p Persistence -s API
+Build started...
+Build succeeded.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Done. To undo this action, use 'ef migrations remove'
+```
+
+Se revisa el archivo de migración y se arranca la aplicación para que se cree la nueva tabla.
+
+##### 183 Añadir el manipulador de fotos
+
+Se crea la clase `Add`.
+
+```c#
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using Domain;
+using MediatR;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Photos
+{
+    public class Add
+    {
+        public class Command : IRequest<Result<Photo>>
+        {
+            public IFormFile File { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<Photo>>
+        {
+            private readonly DataContext _context;
+            private readonly IPhotoAccessor _photoAccessor;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IPhotoAccessor photoAccessor, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _photoAccessor = photoAccessor;
+                _context = context;
+            }
+
+            public async Task<Result<Photo>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var user = await _context.Users.Include(p => p.Photos)
+                    .FirstOrDefaultAsync(x => x.UserName == _userAccessor.GetUserName());
+
+                if (user == null) return null;
+
+                var photoUploadResult = await _photoAccessor.AddPhoto(request.File);
+
+                var photo = new Photo
+                {
+                    Url = photoUploadResult.Url,
+                    Id = photoUploadResult.PublicId
+                };
+
+                if (!user.Photos.Any(x => x.IsMain)) photo.IsMain = true;
+
+                user.Photos.Add(photo);
+
+                var result = await _context.SaveChangesAsync() > 0;
+
+                if (result) return Result<Photo>.Success(photo);
+                
+                return Result<Photo>.Failure("Problem adding photo");
+            }
+        }
+    }
+}
+```
+
+##### 184 Añadir el controlador de fotos
+
+Se crea un nuevo controlador.
+
+```c#
+using System.Threading.Tasks;
+using Application.Photos;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class PhotosController : BaseApiController
+    {
+        [HttpPost]
+        public async Task<IActionResult> Add([FromForm] Add.Command command)
+        {
+            return HandleResult(await Mediator.Send(command));
+        }
+    }
+}
+```
+
+Es necesario reiniciar el servidor para realizar pruebas.
+
+* Login as bob and save token env
+* Add Photo
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/184.1.png)
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/184.2.png)
+
+##### 185 Eliminar fotos
+
+Se crea la clase `Delete`.
+
+```c#
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Photos
+{
+    public class Delete
+    {
+        public class Command : IRequest<Result<Unit>>
+        {
+            public string Id { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<Unit>>
+        {
+            private readonly DataContext _context;
+            private readonly IPhotoAccessor _photoAccessor;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IPhotoAccessor photoAccessor, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _photoAccessor = photoAccessor;
+                _context = context;
+            }
+
+            public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var user = await _context.Users.Include(p => p.Photos)
+                    .FirstOrDefaultAsync(x => x.UserName == _userAccessor.GetUserName());
+
+                if (user == null) return null;
+
+                var photo = user.Photos.FirstOrDefault(x => x.Id == request.Id);
+
+                if (photo == null) return null;
+
+                if (photo.IsMain) return Result<Unit>.Failure("You cannot delete your main photo");
+
+                var result = await _photoAccessor.DeletePhoto(photo.Id);
+
+                if (result== null) return Result<Unit>.Failure("Problem deleting photo from repository");
+
+                user.Photos.Remove(photo);
+
+                var success = await _context.SaveChangesAsync() > 0;
+
+                if (success) return Result<Unit>.Success(Unit.Value);
+
+                return Result<Unit>.Failure("Problem deleting photo");
+            }
+        }
+    }
+}
+```
+
+Se añade un punto final al controlador.
+
+```c#
+using System.Threading.Tasks;
+using Application.Photos;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class PhotosController : BaseApiController
+    {
+        [HttpPost]
+        public async Task<IActionResult> Add([FromForm] Add.Command command)
+        {
+            return HandleResult(await Mediator.Send(command));
+        }
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(string id)
+        {
+            return HandleResult(await Mediator.Send(new Delete.Command { Id = id }));
+        }
+    }
+}
+```
+
+##### 186 Configurar la foto principal
+
+Se crea la clase `SetMain`.
+
+```c#
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Photos
+{
+    public class SetMain
+    {
+        public class Command : IRequest<Result<Unit>>
+        {
+            public string Id { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<Unit>>
+        {
+            private readonly DataContext _context;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _context = context;
+            }
+
+            public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var user = await _context.Users.Include(p => p.Photos)
+                    .FirstOrDefaultAsync(x => x.UserName == _userAccessor.GetUserName());
+
+                if (user == null) return null;
+
+                var photo = user.Photos.FirstOrDefault(x => x.Id == request.Id);
+
+                if (photo == null) return null;
+
+                var currentMain = user.Photos.FirstOrDefault(x => x.IsMain);
+
+                if (currentMain != null) currentMain.IsMain = false;
+
+                photo.IsMain = true;
+
+                var success = await _context.SaveChangesAsync() > 0;
+
+                if (success) return Result<Unit>.Success(Unit.Value);
+
+                return Result<Unit>.Failure("Problem setting main photo");
+            }
+        }
+    }
+}
+```
+
+Se crea un nuevo punto final el en controlador de fotos.
+
+```c#
+using System.Threading.Tasks;
+using Application.Photos;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class PhotosController : BaseApiController
+    {
+        [HttpPost]
+        public async Task<IActionResult> Add([FromForm] Add.Command command)
+        {
+            return HandleResult(await Mediator.Send(command));
+        }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(string id)
+        {
+            return HandleResult(await Mediator.Send(new Delete.Command { Id = id }));
+        }
+
+        [HttpPost("{id}/setMain")]
+        public async Task<IActionResult> SetMain(string id)
+        {
+            return HandleResult(await Mediator.Send(new SetMain.Command { Id = id}));
+        }
+    }
+}
+```
+
+Las pruebas se posponen a poder obtener la lista de fotos de un usuario.
+
+##### 187 Retornar los perfiles de usuario
+
+Se modifica la clase `Profile` para considerar una lista de fotos.
+
+```c#
+using System.Collections.Generic;
+using Domain;
+
+namespace Application.Profiles
+{
+    public class Profile
+    {
+        public string Username { get; set; }
+        public string DisplayName { get; set; }
+        public string Bio { get; set; }
+        public string Image { get; set; }
+        public ICollection<Photo> Photos { get; set; }
+    }
+}
+```
+
+Se crea la clase `Details`.
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Profiles
+{
+    public class Details
+    {
+        public class Query : IRequest<Result<Profile>>
+        {
+            public string Username { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<Profile>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            public Handler(DataContext context, IMapper mapper)
+            {
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<Profile>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var user = await _context.Users
+                    .ProjectTo<Profile>(_mapper.ConfigurationProvider)
+                    .SingleOrDefaultAsync(x => x.Username == request.Username);
+
+                if (user == null) return null;
+
+                return Result<Profile>.Success(user);
+            }
+        }
+    }
+}
+```
+
+Se requiere un controlador para obtener el perfil de un usuario.
+
+```c#
+using System.Threading.Tasks;
+using Application.Profiles;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class ProfilesController : BaseApiController
+    {
+        [HttpGet("{username}")]
+        public async Task<IActionResult> GetProfile(string username)
+        {
+            return HandleResult(await Mediator.Send(new Details.Query {Username = username}));
+        }
+    }
+}
+```
+
+Vamos a tener problemas con `AutoMapper` porque no existe una correspondencia entre `AppUser` y `Profile`, en `MappingProfiles`.
+
+```c#
+var user = await _context.Users
+    .ProjectTo<Profile>(_mapper.ConfigurationProvider)
+    .SingleOrDefaultAsync(x => x.Username == request.Username);
+```
+
+##### 188 Actualizar la configuración de correspondencias
+
+```c#
+using System.Linq;
+using Application.Activities;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.IsHost).AppUser.UserName));
+            CreateMap<ActivityAttendee, Profiles.Profile>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.AppUser.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.AppUser.UserName))
+                .ForMember(d => d.Bio, opt => opt.MapFrom(s => s.AppUser.Bio));
+            CreateMap<AppUser, Profiles.Profile>()
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Photos.FirstOrDefault(f => f.IsMain).Url));
+        }
+    }
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/188.1.png)
+
+Además se realizan pruebas de cambio de foto principal y de borrar fotos.
+
+##### 189 Devolver un DTO de asistente
+
+No se están mandando las fotos de los asistentes a una actividad.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/189.1.png)
+
+Se crea un DTO de asistente. No interesa la lista de fotos, sólo la principal.
+
+```c#
+namespace Application.Activities
+{
+    public class AttendeeDto
+    {
+        public string Username { get; set; }
+        public string DisplayName { get; set; }
+        public string Bio { get; set; }
+        public string Image { get; set; }
+    }
+}
+```
+
+`ActivityDto` manejará una lista de `AttendeeDto` en lugar de `Profile`.
+
+```c#
+using System;
+using System.Collections.Generic;
+using Application.Profiles;
+
+namespace Application.Activities
+{
+    public class ActivityDto
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; }
+        public DateTime Date { get; set; }
+        public string Description { get; set; }
+        public string Category { get; set; }
+        public string City { get; set; }
+        public string Venue { get; set; }
+        public string HostUsername { get; set; }
+        public bool IsCancelled { get; set; }
+        public ICollection<AttendeeDto> Attendees { get; set; }
+    }
+}
+```
+
+Hay que adaptar los perfiles de correspondencias de `Profiles.Profile` a `AttendeeDto` y añadir la imagen principal.
+
+```c#
+using System.Linq;
+using Application.Activities;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.IsHost).AppUser.UserName));
+            CreateMap<ActivityAttendee, AttendeeDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.AppUser.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.AppUser.UserName))
+                .ForMember(d => d.Bio, opt => opt.MapFrom(s => s.AppUser.Bio))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.AppUser.Photos.FirstOrDefault(f => f.IsMain).Url));
+            CreateMap<AppUser, Profiles.Profile>()
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Photos.FirstOrDefault(f => f.IsMain).Url));
+        }
+    }
+}
+```
+
+Se actualiza `CreateUserObject` en `AccountController`. La imagen deja de ser `null` para ser la imagen principal.
+
+```c#
+private UserDto CreateUserObject(AppUser user)
+{
+    return new UserDto
+    {
+        DisplayName = user.DisplayName,
+        Image = user?.Photos?.FirstOrDefault(x => x.IsMain)?.Url,
+        Token = _tokenService.CreateToken(user),
+        Username = user.UserName
+    };
+}
+```
+
+Se actualiza `Login` en `AccountController` para cargar las fotos del usuario.
+
+Antes.
+```c#
+var user = await _userManager.FindByEmailAsync(loginDto.Email);
+```
+Después.
+```c#
+var user = await _userManager.Users.Include(p => p.Photos)
+    .FirstOrDefaultAsync(x => x.Email == loginDto.Email);
+```
+
+Lo mismo para `GetCurrentUser`.
+
+Antes.
+
+```c#
+var user = await _userManager.FindByEmailAsync(User.FindFirstValue(ClaimTypes.Email));
+```
+
+Después.
+
+```c#
+var user = await _userManager.Users.Include(p => p.Photos)
+    .FirstOrDefaultAsync(x => x.Email == User.FindFirstValue(ClaimTypes.Email));
+```
+
