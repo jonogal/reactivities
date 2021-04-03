@@ -6395,3 +6395,1359 @@ var user = await _userManager.Users.Include(p => p.Photos)
     .FirstOrDefaultAsync(x => x.Email == User.FindFirstValue(ClaimTypes.Email));
 ```
 
+##### 190 Sumario de la sección 16
+
+#### Sección 17: Cargar imágenes en el cliente
+
+##### 191 Introducción
+
+* Añadir una página de perfil
+* Mostrar las fotos de usuario
+* Añadir un artilugio para cargar fotos
+* React dropzone
+* React cropper
+* Configurar la foto principal
+* Eliminar fotos
+
+##### 192 Crear una página de perfil
+
+Se crea un componente `ProfilePage`.
+
+```tsx
+import React from 'react';
+
+export default function ProfilePage() {
+    return (
+        <h1>Profile</h1>
+    )
+}
+```
+
+Se añade una ruta para este componente.
+
+```tsx
+import React, { useEffect } from 'react';
+import { Container } from 'semantic-ui-react';
+import NavBar from './NavBar';
+import ActivityDashboard from '../../features/activities/dashboard/ActivityDashboard';
+import { observer } from 'mobx-react-lite';
+import { Route, Switch, useLocation } from 'react-router';
+import HomePage from '../../features/home/HomePage';
+import ActivityForm from '../../features/activities/form/ActivityForm';
+import ActivityDetails from '../../features/activities/details/ActivityDetails';
+import TestErrors from '../../features/errors/TestError';
+import { ToastContainer } from 'react-toastify';
+import NotFound from '../../features/errors/NotFound';
+import ServerError from '../../features/errors/ServerError';
+import LoginForm from '../../features/users/LoginForm';
+import { useStore } from '../stores/store';
+import LoadingComponent from './LoadingComponent';
+import ModalContainer from '../common/modals/ModalContainer';
+import ProfilePage from '../../features/profiles/ProfilePage';
+
+function App() {
+  const location = useLocation();
+  const { commonStore, userStore } = useStore();
+
+  useEffect(() => {
+    if (commonStore.token) {
+      userStore.getUser().finally(() => commonStore.setAppLoaded());
+    } else {
+      commonStore.setAppLoaded();
+    }
+  }, [commonStore, userStore])
+
+  if (!commonStore.appLoaded) return <LoadingComponent content='Loading app...' />
+
+  // </> equival a emprar <Fragment/>
+  return (
+    <>
+      <ToastContainer position='bottom-right' hideProgressBar />
+      <ModalContainer />
+
+      <Route exact path='/' component={HomePage} />
+      <Route
+        path={'/(.+)'}
+        render={() => (
+          <>
+            <NavBar />
+            <Container style={{ marginTop: '7em' }}>
+              <Switch>
+                <Route exact path='/activities' component={ActivityDashboard} />
+                <Route path='/activities/:id' component={ActivityDetails} />
+                <Route key={location.key} path={['/createActivity', '/manage/:id']} component={ActivityForm} />
+                <Route path='/profiles/:username' component={ProfilePage} />
+                <Route path='/errors' component={TestErrors} />
+                <Route path='/server-error' component={ServerError} />
+                <Route path='/login' component={LoginForm} />
+                <Route component={NotFound} />
+              </Switch>
+            </Container>
+          </>
+        )}
+      />
+    </>
+  );
+}
+
+export default observer(App);
+```
+
+Los enlaces ya están preparados, excepto el del menú. Le faltaba una 's'.
+
+```tsx
+<Dropdown.Item as={Link} to={`/profiles/${user?.username}`}
+```
+
+Se crea el componente `ProfileHeader`.
+
+```tsx
+import React from 'react';
+import { Button, Divider, Grid, Header, Item, Reveal, Segment, Statistic } from 'semantic-ui-react';
+
+export default function ProfileHeader() {
+    return (
+        <Segment>
+            <Grid>
+                <Grid.Column width={12}>
+                    <Item.Group>
+                        <Item>
+                            <Item.Image avatar size='small' src={'/assets/user.png'} />
+                            <Item.Content verticalAlign='middle'>
+                                <Header as='h1' content='Displayname' />
+                            </Item.Content>
+                        </Item>
+                    </Item.Group>
+                </Grid.Column>
+                <Grid.Column width={4}>
+                    <Statistic.Group widths={2}>
+                        <Statistic label='Followers' value='5' />
+                        <Statistic label='Following' value='42' />
+                    </Statistic.Group>
+                    <Divider />
+                    <Reveal animated='move'>
+                        <Reveal.Content visible style={{ width: '100%' }}>
+                            <Button fluid color='teal' content='Following' />
+                        </Reveal.Content>
+                        <Reveal.Content hidden style={{ width: '100%' }}>
+                            <Button
+                                fluid
+                                basic
+                                color={true ? 'red' : 'green'}
+                                content={true ? 'Unfollow' : 'Follow'}
+                            />
+                        </Reveal.Content>
+                    </Reveal>
+                </Grid.Column>
+            </Grid>
+        </Segment>
+    )
+}
+```
+
+Que se usa en `ProfilePage`.
+
+```tsx
+import React from 'react';
+import { Grid } from 'semantic-ui-react';
+import ProfileHeader from './ProfileHeader';
+
+export default function ProfilePage() {
+    return (
+        <Grid>
+            <Grid.Column width={16}>
+                <ProfileHeader />
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+##### 194 Añadir el contenido del perfil
+
+Se crea el componente `ProfileContent`.
+
+```tsx
+import React from 'react';
+import { Tab } from 'semantic-ui-react';
+
+export default function ProfileContent() {
+    const panes = [
+        {menuItem: 'About', render: () => <Tab.Pane>About content</Tab.Pane>},
+        {menuItem: 'Photos', render: () => <Tab.Pane>Photos content</Tab.Pane>},
+        {menuItem: 'Events', render: () => <Tab.Pane>Events content</Tab.Pane>},
+        {menuItem: 'Followers', render: () => <Tab.Pane>Followers content</Tab.Pane>},
+        {menuItem: 'Following', render: () => <Tab.Pane>Following content</Tab.Pane>}
+    ];
+
+
+    return (
+        <Tab
+            menu={{fluid: true, vertical: true}}
+            menuPosition='right'
+            panes={panes}
+        />
+    )
+}
+```
+
+Se incluye en `ProfilePage`.
+
+```tsx
+import React from 'react';
+import { Grid } from 'semantic-ui-react';
+import ProfileContent from './ProfileContent';
+import ProfileHeader from './ProfileHeader';
+
+export default function ProfilePage() {
+    return (
+        <Grid>
+            <Grid.Column width={16}>
+                <ProfileHeader />
+                <ProfileContent />
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+##### 195 Obtener los datos de perfil
+
+Se requiere una interfaz para `Photo`, en `app/models/profile.ts`, que se utiliza en la interfaz `Profile`.
+
+```tsx
+import { User } from "./user";
+
+export interface Profile {
+    username: string;
+    displayName: string;
+    image?: string;
+    bio?: string;
+    photos?: Photo[];
+}
+
+export class Profile implements Profile {
+    constructor(user: User) {
+        this.username = user.username;
+        this.displayName = user.displayName;
+        this.image = user.image;
+    }
+}
+
+export interface Photo {
+    id: string;
+    url: string;
+    isMain: boolean;
+}
+```
+
+Se adapta `agent.ts`. Se crea un objeto con las operaciones de `Profile`, en este caso `get` únicamente.
+
+```tsx
+const Profiles = {
+    get: (username: string) => requests.get<Profile>(`/profiles/${username}`)
+}
+
+const agent = {
+    Activities,
+    Account,
+    Profiles
+}
+```
+
+Se crea el almacén de perfiles `ProfileStore` en `profileStore.ts`.
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Profile } from "../models/profile";
+
+export default class ProfileStore {
+    profile: Profile | null = null;
+    loadingProfile = false;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    loadProfile = async (username: string) => {
+        this.loadingProfile = true;
+        try {
+            const profile = await agent.Profiles.get(username);
+            runInAction(() => {
+                this.profile = profile;
+                this.loadingProfile = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loadingProfile = false);
+        }
+    }
+}
+```
+
+Se añade en la lista de almacenes.
+
+```tsx
+import { createContext, useContext } from "react";
+import ActivityStore from "./activityStore";
+import CommonStore from "./commonStore";
+import ModalStore from "./modalStore";
+import ProfileStore from "./profileStore";
+import UserStore from "./userStore";
+
+interface Store {
+    activityStore: ActivityStore;
+    commonStore: CommonStore;
+    userStore: UserStore;
+    modalStore: ModalStore;
+    profileStore: ProfileStore;
+}
+
+export const store: Store = {
+    activityStore: new ActivityStore(),
+    commonStore: new CommonStore(),
+    userStore: new UserStore(),
+    modalStore: new ModalStore(),
+    profileStore: new ProfileStore()
+}
+
+export const StoreContext = createContext(store);
+
+export function useStore() {
+    return useContext(StoreContext);
+}
+```
+
+##### 196 Obtener los datos de perfil 2ª parte
+
+Se adaptan `ProfilePage` y `ProfileHeader`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useEffect } from 'react';
+import { useParams } from 'react-router';
+import { Grid } from 'semantic-ui-react';
+import LoadingComponent from '../../app/layout/LoadingComponent';
+import { useStore } from '../../app/stores/store';
+import ProfileContent from './ProfileContent';
+import ProfileHeader from './ProfileHeader';
+
+export default observer(function ProfilePage() {
+    const { username } = useParams<{ username: string }>();
+    const { profileStore } = useStore();
+    const { loadingProfile, loadProfile, profile } = profileStore;
+
+    useEffect(() => {
+        loadProfile(username)
+    }, [loadProfile, username])
+
+    if (loadingProfile) return <LoadingComponent content='Loading profile...' />
+
+    return (
+        <Grid>
+            <Grid.Column width={16}>
+                {profile && <ProfileHeader profile={profile} />}
+                <ProfileContent />
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Button, Divider, Grid, Header, Item, Reveal, Segment, Statistic } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileHeader({profile}: Props) {
+    return (
+        <Segment>
+            <Grid>
+                <Grid.Column width={12}>
+                    <Item.Group>
+                        <Item>
+                            <Item.Image avatar size='small' src={profile?.image || '/assets/user.png'} />
+                            <Item.Content verticalAlign='middle'>
+                                <Header as='h1' content={profile?.displayName} />
+                            </Item.Content>
+                        </Item>
+                    </Item.Group>
+                </Grid.Column>
+                <Grid.Column width={4}>
+                    <Statistic.Group widths={2}>
+                        <Statistic label='Followers' value='5' />
+                        <Statistic label='Following' value='42' />
+                    </Statistic.Group>
+                    <Divider />
+                    <Reveal animated='move'>
+                        <Reveal.Content visible style={{ width: '100%' }}>
+                            <Button fluid color='teal' content='Following' />
+                        </Reveal.Content>
+                        <Reveal.Content hidden style={{ width: '100%' }}>
+                            <Button
+                                fluid
+                                basic
+                                color={true ? 'red' : 'green'}
+                                content={true ? 'Unfollow' : 'Follow'}
+                            />
+                        </Reveal.Content>
+                    </Reveal>
+                </Grid.Column>
+            </Grid>
+        </Segment>
+    )
+})
+```
+
+##### 196 Mostrar las fotos
+
+Se crea el componente `ProfilePhotos` y se incluye en `ProfileContent`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Card, Header, Image, Tab } from 'semantic-ui-react';
+import { useStore } from '../../app/stores/store';
+
+export default observer(function ProfilePhotos() {
+    const { profileStore } = useStore();
+
+    return (
+        <Tab.Pane>
+            <Header icon='image' content='Photos' />
+            <Card.Group itemsPerRow={5}>
+                <Card>
+                    <Image src={'/assets/user.png'} />
+                </Card>
+                <Card>
+                    <Image src={'/assets/user.png'} />
+                </Card>
+                <Card>
+                    <Image src={'/assets/user.png'} />
+                </Card>
+            </Card.Group>
+        </Tab.Pane>
+    )
+})
+```
+
+```tsx
+import React from 'react';
+import { Tab } from 'semantic-ui-react';
+import ProfilePhotos from './ProfilePhotos';
+
+export default function ProfileContent() {
+    const panes = [
+        {menuItem: 'About', render: () => <Tab.Pane>About content</Tab.Pane>},
+        {menuItem: 'Photos', render: () => <Tab.Pane><ProfilePhotos /></Tab.Pane>},
+        {menuItem: 'Events', render: () => <Tab.Pane>Events content</Tab.Pane>},
+        {menuItem: 'Followers', render: () => <Tab.Pane>Followers content</Tab.Pane>},
+        {menuItem: 'Following', render: () => <Tab.Pane>Following content</Tab.Pane>}
+    ];
+
+    return (
+        <Tab
+            menu={{fluid: true, vertical: true}}
+            menuPosition='right'
+            panes={panes}
+        />
+    )
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/196.1.png)
+
+Se adaptan `ProfilePage`, `ProfileContent` y `ProfilePhotos` para mostrar la lista de fotos del perfil.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Card, Header, Image, Tab } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfilePhotos({ profile }: Props) {
+    return (
+        <Tab.Pane>
+            <Header icon='image' content='Photos' />
+            <Card.Group itemsPerRow={5}>
+                {profile.photos?.map(photo => (
+                    <Card key={photo.id}>
+                        <Image src={photo.url} />
+                    </Card>
+                ))}
+            </Card.Group>
+        </Tab.Pane>
+    )
+})
+```
+
+##### 198 Representación condicional del artilugio de fotos
+
+En el caso de que el perfil mostrado sea el del usuario identificado, se dará la posibilidad de gestionar la lista de fotos.
+
+Se modifica el almacén de perfiles para añadir la propiedad calculada `isCurrentUser`.
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Profile } from "../models/profile";
+import { store } from "./store";
+
+export default class ProfileStore {
+    profile: Profile | null = null;
+    loadingProfile = false;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isCurrentUser() {
+        if (store.userStore.user && this.profile) {
+            return store.userStore.user.username === this.profile.username;
+        }
+        return false;
+    }
+
+    loadProfile = async (username: string) => {
+        this.loadingProfile = true;
+        try {
+            const profile = await agent.Profiles.get(username);
+            runInAction(() => {
+                this.profile = profile;
+                this.loadingProfile = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loadingProfile = false);
+        }
+    }
+}
+```
+
+Se adapta el componente `ProfilePhotos`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useState } from 'react';
+import { Button, Card, Grid, Header, Image, Tab } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+import { useStore } from '../../app/stores/store';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfilePhotos({ profile }: Props) {
+    const { profileStore: { isCurrentUser } } = useStore();
+    const [addPhotoMode, setAddPhotoMode] = useState(false);
+
+    return (
+        <Tab.Pane>
+            <Grid>
+                <Grid.Column width={16}>
+                    <Header floated='left' icon='image' content='Photos' />
+                    {isCurrentUser && (
+                        <Button floated='right' basic
+                            content={addPhotoMode ? 'Cancel' : 'Add Photo'}
+                            onClick={() => setAddPhotoMode(!addPhotoMode)}
+                        />
+                    )}
+                </Grid.Column>
+                <Grid.Column width={16}>
+                    {addPhotoMode ? (
+                        <p>Photo widget goes here</p>
+                    ) : (
+                        <Card.Group itemsPerRow={5}>
+                            {profile.photos?.map(photo => (
+                                <Card key={photo.id}>
+                                    <Image src={photo.url} />
+                                </Card>
+                            ))}
+                        </Card.Group>
+                    )}
+                </Grid.Column>
+            </Grid>
+        </Tab.Pane>
+    )
+})
+```
+
+##### 199 Crear un artilugio de carga de fotos
+
+Se pretende que sea reutilizable, en cualquier parte de la aplicación. `PhotoUploadWidget` se crea en la nueva carpeta `src/app/common/imageUpload`.
+
+La carga de una foto se va a realizar en 3 pasos. Se diseña la apariencia del artilugio.
+
+```tsx
+import React from 'react';
+import { Grid, Header } from 'semantic-ui-react';
+
+export default function PhotoUploadWidget() {
+    return (
+        <Grid>
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 1 - Add Photo' />
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 2 - Resize image' />
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 3 - Preview & Upload' />
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+##### 200 Añadir una zona de dejar caer
+
+https://github.com/react-dropzone/react-dropzone
+
+Se va a utilizar la alternativa de gancho. Se copia el ejemplo de la página del proyecto para crear `PhotoWidgetDropzone`, con algunos cambios mínimos.
+
+Se instala el paquete.
+
+```bash
+[joan@alkaid client-app]$ npm install react-dropzone
+```
+
+```tsx
+import React, { useCallback } from 'react'
+import { useDropzone } from 'react-dropzone'
+
+export default function PhotoWidgetDropzone() {
+    const onDrop = useCallback(acceptedFiles => {
+        console.log(acceptedFiles);
+    }, [])
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
+
+    return (
+        <div {...getRootProps()}>
+            <input {...getInputProps()} />
+            {
+                isDragActive ?
+                    <p>Drop the files here ...</p> :
+                    <p>Drag 'n' drop some files here, or click to select files</p>
+            }
+        </div>
+    )
+}
+```
+
+Se añade el artilugio al primer paso en `PhotoUploadWidget` y se realiza una prueba.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/200.1.png)
+
+##### 201 Dar estilo a la zona de dejar caer
+
+Se incorpora estado local a `PhotoUploadWidget` para utilizarlo en `PhotoWidgetDropZone`.
+
+```tsx
+import React, { useState } from 'react';
+import { Grid, Header, Image } from 'semantic-ui-react';
+import PhotoWidgetDropzone from './PhotoWidgetDropzone';
+
+export default function PhotoUploadWidget() {
+    const [files, setFiles] = useState<any>([]);
+
+    return (
+        <Grid>
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 1 - Add Photo' />
+                <PhotoWidgetDropzone setFiles={setFiles} />
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 2 - Resize image' />
+                {files && files.length > 0 && (
+                    <Image src={files[0].preview} />
+                )}
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 3 - Preview & Upload' />
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+```tsx
+import React, { useCallback } from 'react'
+import { useDropzone } from 'react-dropzone'
+import { Header, Icon } from 'semantic-ui-react'
+
+interface Props {
+    setFiles: (files: any) => void;
+}
+
+export default function PhotoWidgetDropzone({setFiles}: Props) {
+    const dzStyles = {
+        border: 'dashed 3px #eee',
+        borderColor: '#eee',
+        borderRadius: '5px',
+        paddingTop: '30px',
+        textAlign: 'center' as 'center',
+        height: 200
+    }
+
+    const dzActive = {
+        borderColor: 'green'
+    }
+
+    const onDrop = useCallback(acceptedFiles => {
+        setFiles(acceptedFiles.map((file: any) => Object.assign(file, {
+            preview: URL.createObjectURL(file)
+        })))
+    }, [setFiles])
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
+
+    return (
+        <div {...getRootProps()} style={isDragActive ? {...dzStyles, ...dzActive} : {...dzStyles}} >
+            <input {...getInputProps()} />
+            <Icon name='upload' size='huge' />
+            <Header content='Drop image here' />
+        </div>
+    )
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/201.1.png)
+
+##### 202 Añadir un cortador react
+
+https://github.com/react-cropper/react-cropper
+
+```bash
+[joan@alkaid client-app]$ npm install react-cropper
+```
+
+Se crea el componente `PhotoWidgetCropper`. En las propiedades del cortador hay que indicar una función que se le pasará del componente que lo usa. Es el resultado de la operación de recorte, una imagen.
+
+```tsx
+import React from 'react';
+import { Cropper } from 'react-cropper';
+import 'cropperjs/dist/cropper.css';
+
+interface Props {
+    imagePreview: string;
+    setCropper: (cropper: Cropper) => void;
+}
+
+export default function PhotoWidgetCropper({imagePreview, setCropper}: Props) {
+    return (
+        <Cropper
+            src={imagePreview}
+            style={{height:200, width: '100%'}}
+            initialAspectRatio={1}
+            aspectRatio={1}
+            preview='.img-preview'
+            guides={false}
+            viewMode={1}
+            autoCropArea={1}
+            background={false}
+            onInitialized={cropper => setCropper(cropper)}
+        />
+    )
+}
+```
+```tsx
+import React, { useEffect, useState } from 'react';
+import { Cropper } from 'react-cropper';
+import { Grid, Header } from 'semantic-ui-react';
+import PhotoWidgetCropper from './PhotoWidgetCropper';
+import PhotoWidgetDropzone from './PhotoWidgetDropzone';
+
+export default function PhotoUploadWidget() {
+    const [files, setFiles] = useState<any>([]);
+    const [cropper, setCropper] = useState<Cropper>();
+
+    function onCrop() {
+        if (cropper) {
+            cropper.getCroppedCanvas().toBlob(blob => console.log(blob))
+        }
+    }
+
+    // se limpia la memoria utilizada en dropzone
+    useEffect(() => {
+        return () => {
+            files.forEach((file: any) => URL.revokeObjectURL(file.preview))
+        }
+    }, [files])
+
+    return (
+        <Grid>
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 1 - Add Photo' />
+                <PhotoWidgetDropzone setFiles={setFiles} />
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 2 - Resize image' />
+                {files && files.length > 0 && (
+                    <PhotoWidgetCropper setCropper={setCropper} imagePreview={files[0].preview} />
+                )}
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 3 - Preview & Upload' />
+                <div className='img-preview' style={{minHeight: 200, overflow: 'hidden'}} />
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/202.1.png)
+
+Se finaliza el diseño del artilugio de carga de fotos añadiendo los botones aceptar/cancelar.
+
+```tsx
+import React, { useEffect, useState } from 'react';
+import { Cropper } from 'react-cropper';
+import { Button, Grid, Header } from 'semantic-ui-react';
+import PhotoWidgetCropper from './PhotoWidgetCropper';
+import PhotoWidgetDropzone from './PhotoWidgetDropzone';
+
+export default function PhotoUploadWidget() {
+    const [files, setFiles] = useState<any>([]);
+    const [cropper, setCropper] = useState<Cropper>();
+
+    function onCrop() {
+        if (cropper) {
+            cropper.getCroppedCanvas().toBlob(blob => console.log(blob))
+        }
+    }
+
+    // se limpia la memoria utilizada en dropzone
+    useEffect(() => {
+        return () => {
+            files.forEach((file: any) => URL.revokeObjectURL(file.preview))
+        }
+    }, [files])
+
+    return (
+        <Grid>
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 1 - Add Photo' />
+                <PhotoWidgetDropzone setFiles={setFiles} />
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 2 - Resize image' />
+                {files && files.length > 0 && (
+                    <PhotoWidgetCropper setCropper={setCropper} imagePreview={files[0].preview} />
+                )}
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 3 - Preview & Upload' />
+                {files && files.length > 0 &&
+                <>
+                    <div className='img-preview' style={{ minHeight: 200, overflow: 'hidden' }} />
+                    <Button.Group widths={2}>
+                        <Button onClick={onCrop} positive icon='check' />
+                        <Button onClick={() => setFiles([])} icon='close' />
+                    </Button.Group>
+                </>}
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/202.2.png)
+
+##### 203 Añadir el método de carga de fotos
+
+Se añade un método `uploadPhoto` en `agent`.
+
+```tsx
+const Profiles = {
+    get: (username: string) => requests.get<Profile>(`/profiles/${username}`),
+    uploadPhoto: (file: Blob) => {
+        let formData = new FormData();
+        formData.append('File', file);
+        return axios.post<Photo>('photos', formData, {
+            headers: {'Content-type': 'multipart/form-data'}
+        })
+    }
+}
+```
+
+Hay que se muy cuidadoso con las cadenas de caracteres.
+
+Se ajusta el almacén de perfiles y el de usuarios.
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Profile } from "../models/profile";
+import { store } from "./store";
+
+export default class ProfileStore {
+    profile: Profile | null = null;
+    loadingProfile = false;
+    uploading = false;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isCurrentUser() {
+        if (store.userStore.user && this.profile) {
+            return store.userStore.user.username === this.profile.username;
+        }
+        return false;
+    }
+
+    loadProfile = async (username: string) => {
+        this.loadingProfile = true;
+        try {
+            const profile = await agent.Profiles.get(username);
+            runInAction(() => {
+                this.profile = profile;
+                this.loadingProfile = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loadingProfile = false);
+        }
+    }
+
+    uploadPhoto = async (file: Blob) => {
+        this.uploading = true;
+        try {
+            const response = await agent.Profiles.uploadPhoto(file);
+            const photo = response.data;
+            runInAction(() => {
+                if (this.profile) {
+                    this.profile.photos?.push(photo);
+                    if (photo.isMain && store.userStore.user) {
+                        store.userStore.setImage(photo.url);
+                        this.profile.image = photo.url;
+                    }
+                }
+                this.uploading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.uploading = false);
+        }
+    }
+}
+```
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import { history } from "../..";
+import agent from "../api/agent";
+import { User, UserFormValues } from "../models/user";
+import { store } from "./store";
+
+export default class UserStore {
+    user: User | null = null;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isLoggedIn() {
+        return !!this.user;
+    }
+
+    login = async (creds: UserFormValues) => {
+        try {
+            const user = await agent.Account.login(creds);
+            store.commonStore.setToken(user.token);
+            runInAction(() => { this.user = user; })
+            history.push('/activities');
+            store.modalStore.closeModal();
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    logout = () => {
+        store.commonStore.setToken(null);
+        window.localStorage.removeItem('jwt');
+        this.user = null;
+        history.push('/');
+    }
+
+    getUser = async () => {
+        try {
+            const user = await agent.Account.current();
+            runInAction(() => this.user = user);
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    register = async (creds: UserFormValues) => {
+        try {
+            const user = await agent.Account.register(creds);
+            store.commonStore.setToken(user.token);
+            runInAction(() => { this.user = user; })
+            history.push('/activities');
+            store.modalStore.closeModal();
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    setImage = (image: string) => {
+        if (this.user) this.user.image = image;
+    }
+}
+```
+
+Finalmente se modifica el componente `ProfilePhotos`, donde se creará la nueva función para cargar una foto.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useState } from 'react';
+import { Button, Card, Grid, Header, Image } from 'semantic-ui-react';
+import PhotoUploadWidget from '../../app/common/imageUpload/PhotoUploadWidget';
+import { Profile } from '../../app/models/profile';
+import { useStore } from '../../app/stores/store';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfilePhotos({ profile }: Props) {
+    const { profileStore: { isCurrentUser, uploadPhoto, uploading } } = useStore();
+    const [addPhotoMode, setAddPhotoMode] = useState(false);
+
+    function handlePhotoUpload(file: Blob) {
+        uploadPhoto(file).then(() => setAddPhotoMode(false));
+    }
+
+    return (
+        <Grid>
+            <Grid.Column width={16}>
+                <Header floated='left' icon='image' content='Photos' />
+                {isCurrentUser && (
+                    <Button floated='right' basic
+                        content={addPhotoMode ? 'Cancel' : 'Add Photo'}
+                        onClick={() => setAddPhotoMode(!addPhotoMode)}
+                    />
+                )}
+            </Grid.Column>
+            <Grid.Column width={16}>
+                {addPhotoMode ? (
+                    <PhotoUploadWidget uploadPhoto={handlePhotoUpload} loading={uploading} />
+                ) : (
+                    <Card.Group itemsPerRow={5}>
+                        {profile.photos?.map(photo => (
+                            <Card key={photo.id}>
+                                <Image src={photo.url} />
+                            </Card>
+                        ))}
+                    </Card.Group>
+                )}
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+```tsx
+import React, { useEffect, useState } from 'react';
+import { Cropper } from 'react-cropper';
+import { Button, Grid, Header } from 'semantic-ui-react';
+import PhotoWidgetCropper from './PhotoWidgetCropper';
+import PhotoWidgetDropzone from './PhotoWidgetDropzone';
+
+interface Props {
+    uploadPhoto: (file: Blob) => void;
+    loading: boolean;
+}
+
+export default function PhotoUploadWidget({uploadPhoto, loading}: Props) {
+    const [files, setFiles] = useState<any>([]);
+    const [cropper, setCropper] = useState<Cropper>();
+
+    function onCrop() {
+        if (cropper) {
+            cropper.getCroppedCanvas().toBlob(blob => uploadPhoto(blob!))
+        }
+    }
+
+    // se limpia la memoria utilizada en dropzone
+    useEffect(() => {
+        return () => {
+            files.forEach((file: any) => URL.revokeObjectURL(file.preview))
+        }
+    }, [files])
+
+    return (
+        <Grid>
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 1 - Add Photo' />
+                <PhotoWidgetDropzone setFiles={setFiles} />
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 2 - Resize image' />
+                {files && files.length > 0 && (
+                    <PhotoWidgetCropper setCropper={setCropper} imagePreview={files[0].preview} />
+                )}
+            </Grid.Column>
+            <Grid.Column width={1} />
+            <Grid.Column width={4}>
+                <Header sub color='teal' content='Step 3 - Preview & Upload' />
+                {files && files.length > 0 &&
+                <>
+                    <div className='img-preview' style={{ minHeight: 200, overflow: 'hidden' }} />
+                    <Button.Group widths={2}>
+                        <Button loading={loading} onClick={onCrop} positive icon='check' />
+                        <Button disabled={loading} onClick={() => setFiles([])} icon='close' />
+                    </Button.Group>
+                </>}
+            </Grid.Column>
+        </Grid>
+    )
+}
+```
+
+##### 204 Configurar la foto principal
+
+ Se añade la funcionalidad a `agent`.
+
+```tsx
+const Profiles = {
+    get: (username: string) => requests.get<Profile>(`/profiles/${username}`),
+    uploadPhoto: (file: Blob) => {
+        let formData = new FormData();
+        formData.append('File', file);
+        return axios.post<Photo>('photos', formData, {
+            headers: {'Content-type': 'multipart/form-data'}
+        })
+    },
+    setMainPhoto: (id: string) => requests.post(`/photos(${id}/setmain)`, {}),
+    deletePhoto: (id: string) => requests.del(`/photos/${id}`)
+}
+```
+
+Se añade la funcionalidad a `profileStore`.
+
+```tsx
+setMainPhoto = async (photo: Photo) => {
+    this.loading = true;
+    try {
+        await agent.Profiles.setMainPhoto(photo.id);
+        store.userStore.setImage(photo.url);
+        runInAction(() => {
+            if (this.profile && this.profile.photos) {
+                this.profile.photos.find(p => p.isMain)!.isMain = false;
+                this.profile.photos.find(p => p.id === photo.id)!.isMain = true;
+                this.profile.image = photo.url;
+            }
+            this.loading = false;
+        })
+    } catch (error) {
+        console.log(error);
+        runInAction(() => this.loading = false);
+    }
+}
+```
+
+Se adapta `ProfilePhotos`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { SyntheticEvent, useState } from 'react';
+import { Button, Card, Grid, Header, Image } from 'semantic-ui-react';
+import PhotoUploadWidget from '../../app/common/imageUpload/PhotoUploadWidget';
+import { Photo, Profile } from '../../app/models/profile';
+import { useStore } from '../../app/stores/store';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfilePhotos({ profile }: Props) {
+    const { profileStore: { isCurrentUser, uploadPhoto, uploading,
+            loading, setMainPhoto } } = useStore();
+    const [addPhotoMode, setAddPhotoMode] = useState(false);
+    const [target, setTarget] = useState('');
+
+    function handlePhotoUpload(file: Blob) {
+        uploadPhoto(file).then(() => setAddPhotoMode(false));
+    }
+
+    function handleSetMainPhoto(photo: Photo, e: SyntheticEvent<HTMLButtonElement>) {
+        setTarget(e.currentTarget.name);
+        setMainPhoto(photo);
+    }
+
+    return (
+        <Grid>
+            <Grid.Column width={16}>
+                <Header floated='left' icon='image' content='Photos' />
+                {isCurrentUser && (
+                    <Button floated='right' basic
+                        content={addPhotoMode ? 'Cancel' : 'Add Photo'}
+                        onClick={() => setAddPhotoMode(!addPhotoMode)}
+                    />
+                )}
+            </Grid.Column>
+            <Grid.Column width={16}>
+                {addPhotoMode ? (
+                    <PhotoUploadWidget uploadPhoto={handlePhotoUpload} loading={uploading} />
+                ) : (
+                    <Card.Group itemsPerRow={5}>
+                        {profile.photos?.map(photo => (
+                            <Card key={photo.id}>
+                                <Image src={photo.url} />
+                                {isCurrentUser && (
+                                    <Button.Group fluid widths={2}>
+                                        <Button
+                                            basic
+                                            color='green'
+                                            content='Main'
+                                            name={photo.id}
+                                            disabled={photo.isMain}
+                                            loading={target === photo.id && loading}
+                                            onClick={e => handleSetMainPhoto(photo, e)}
+                                        />
+                                        <Button basic color='red' icon='trash' />
+                                    </Button.Group>
+                                )}
+                            </Card>
+                        ))}
+                    </Card.Group>
+                )}
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+##### 205 Borrar fotos
+
+En `agent` ya tenemos la funcionalidad se borrar una foto.
+
+Se define la funcionalidad en `profileStore`.
+
+```tsx
+// no se permite eliminar la foto principal
+deletePhoto = async (photo: Photo) => {
+    this.loading = true;
+    try {
+        await agent.Profiles.deletePhoto(photo.id);
+        runInAction(() => {
+            if (this.profile) {
+                this.profile.photos = this.profile.photos!.filter(p => p.id !== photo.id);
+            }
+            this.loading = false;
+        })
+    } catch (error) {
+        console.log(error);
+        runInAction(() => this.loading = false);           
+    }
+}
+```
+
+Se ajusta `ProfilePhotos`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { SyntheticEvent, useState } from 'react';
+import { Button, Card, Grid, Header, Image } from 'semantic-ui-react';
+import PhotoUploadWidget from '../../app/common/imageUpload/PhotoUploadWidget';
+import { Photo, Profile } from '../../app/models/profile';
+import { useStore } from '../../app/stores/store';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfilePhotos({ profile }: Props) {
+    const { profileStore: { isCurrentUser, uploadPhoto, uploading,
+            loading, setMainPhoto, deletePhoto } } = useStore();
+    const [addPhotoMode, setAddPhotoMode] = useState(false);
+    const [target, setTarget] = useState('');
+
+    function handlePhotoUpload(file: Blob) {
+        uploadPhoto(file).then(() => setAddPhotoMode(false));
+    }
+
+    function handleSetMainPhoto(photo: Photo, e: SyntheticEvent<HTMLButtonElement>) {
+        setTarget(e.currentTarget.name);
+        setMainPhoto(photo);
+    }
+
+    function handleDeletePhoto(photo: Photo, e: SyntheticEvent<HTMLButtonElement>) {
+        setTarget(e.currentTarget.name);
+        deletePhoto(photo);
+    }
+    return (
+        <Grid>
+            <Grid.Column width={16}>
+                <Header floated='left' icon='image' content='Photos' />
+                {isCurrentUser && (
+                    <Button floated='right' basic
+                        content={addPhotoMode ? 'Cancel' : 'Add Photo'}
+                        onClick={() => setAddPhotoMode(!addPhotoMode)}
+                    />
+                )}
+            </Grid.Column>
+            <Grid.Column width={16}>
+                {addPhotoMode ? (
+                    <PhotoUploadWidget uploadPhoto={handlePhotoUpload} loading={uploading} />
+                ) : (
+                    <Card.Group itemsPerRow={5}>
+                        {profile.photos?.map(photo => (
+                            <Card key={photo.id}>
+                                <Image src={photo.url} />
+                                {isCurrentUser && (
+                                    <Button.Group fluid widths={2}>
+                                        <Button
+                                            basic
+                                            color='green'
+                                            content='Main'
+                                            name={'main' + photo.id}
+                                            disabled={photo.isMain}
+                                            loading={target === 'main' + photo.id && loading}
+                                            onClick={e => handleSetMainPhoto(photo, e)}
+                                        />
+                                        <Button
+                                            basic
+                                            color='red'
+                                            icon='trash'
+                                            name={photo.id}
+                                            disabled={photo.isMain}
+                                            loading={target === photo.id && loading}
+                                            onClick={e => handleDeletePhoto(photo, e)}
+                                        />
+                                    </Button.Group>
+                                )}
+                            </Card>
+                        ))}
+                    </Card.Group>
+                )}
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+##### 206 Sumario de la sección 17
+
+
+
