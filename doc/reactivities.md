@@ -7749,5 +7749,366 @@ export default observer(function ProfilePhotos({ profile }: Props) {
 
 ##### 206 Sumario de la sección 17
 
+#### Sección 18: Reto
 
+##### 207 Introducción al reto
+
+> Create an Edit handler to update the profile. We only want to validate against the display
+> name here as we do not ask the user for a bio when they register so we want to allow this
+> to be optional.
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using FluentValidation;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Profiles
+{
+    public class Edit
+    {
+        public class Command : IRequest<Result<Unit>>
+        {
+            public string DisplayName { get; set; }
+            public string Bio { get; set; }
+        }
+
+        public class CommandValidator : AbstractValidator<Command>
+        {
+            public CommandValidator()
+            {
+                RuleFor(u => u.DisplayName).NotEmpty();
+            }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<Unit>>
+        {
+            private readonly DataContext _context;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _context = context;
+            }
+
+            public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == _userAccessor.GetUserName());
+
+                user.DisplayName = request.DisplayName ?? user.DisplayName;
+                user.Bio = request.Bio ?? user.Bio;
+
+                var succes = await _context.SaveChangesAsync() > 0;
+
+                if (succes) return Result<Unit>.Success(Unit.Value);
+
+                return Result<Unit>.Failure("Problem updating profile");
+            }
+        }
+    }
+}
+```
+
+> Update the ProfilesController and add an endpoint for editing the profile.
+
+```tsx
+using System.Threading.Tasks;
+using Application.Profiles;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class ProfilesController : BaseApiController
+    {
+        [HttpGet("{username}")]
+        public async Task<IActionResult> GetProfile(string username)
+        {
+            return HandleResult(await Mediator.Send(new Details.Query {Username = username}));
+        }
+
+        [HttpPut]
+        public async Task<IActionResult> Edit(Edit.Command command)
+        {
+            return HandleResult(await Mediator.Send(command));
+        }
+    }
+}
+```
+
+> Test the endpoint in Postman using the 3 requests in the Module 18 folder.
+>
+> If we try and update the profile again without changing it we will get a 400 bad
+> request as there were no changes to save to the Database.
+>
+> If you wanted a different behaviour here so that you always get a 200 back even if no
+> changes were saved then you can mark the entity as modified regardless of whether there
+> were any changes by updating the Edit handler with the following code:
+
+```c#
+public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+{
+    var user = await _context.Users.FirstOrDefaultAsync(u => u.UserName == _userAccessor.GetUserName());
+
+    user.DisplayName = request.DisplayName ?? user.DisplayName;
+    user.Bio = request.Bio ?? user.Bio;
+
+    _context.Entry(user).State = EntityState.Modified; // evita 400 bad request
+
+    var succes = await _context.SaveChangesAsync() > 0;
+
+    if (succes) return Result<Unit>.Success(Unit.Value);
+
+    return Result<Unit>.Failure("Problem updating profile");
+}
+```
+
+https://docs.microsoft.com/en-us/ef/ef6/saving/change-tracking/entity-state
+
+> Updating the client. Add a new request in the agent.ts. Hint: We need to use
+> Partial<Profile> for the type here as we are only allowing the user to update 2 of the
+> properties contained in the Profile type.
+
+```tsx
+const Profiles = {
+    get: (username: string) => requests.get<Profile>(`/profiles/${username}`),
+    uploadPhoto: (file: Blob) => {
+        let formData = new FormData();
+        formData.append('File', file);
+        return axios.post<Photo>('photos', formData, {
+            headers: {'Content-type': 'multipart/form-data'}
+        })
+    },
+    setMainPhoto: (id: string) => requests.post(`/photos/${id}/setmain`, {}),
+    deletePhoto: (id: string) => requests.del(`/photos/${id}`),
+    updateProfile: (profile: Partial<Profile>) => requests.put(`/profiles`, profile)
+}
+```
+
+> Add a helper method in the user store to set the display name.
+
+```tsx
+setDisplayName = (name: string) => {
+    if (this.user) this.user.displayName = name;
+}
+```
+
+> Add a method to update the profile in the profile store. The types are a bit tricky here as
+> we are setting the Profile with the existing profile and overwriting any changes to the
+> profile from the partial profile we are passing in as a parameter so we need to make use of
+> the ‘as Profile’ to make TypeScript happy.
+
+```tsx
+updateProfile = async (profile: Partial<Profile>) => {
+    this.loading = true;
+    try {
+        await agent.Profiles.updateProfile(profile);
+        runInAction(() => {
+            if (profile.displayName && profile.displayName !== store.userStore.user?.displayName) {
+                store.userStore.setDisplayName(profile.displayName);
+            }
+            this.profile = {...this.profile, ...profile as Profile}
+            this.loading = false;
+        })
+    } catch (error) {
+        console.log(error);
+        runInAction(() => this.loading = false);
+    }
+}
+```
+
+> Create a Profile Edit form component in the Profiles feature folder. Hint: We need to
+> control the state of whether we are displaying the form or the user info here so we need
+> some state in the parent to control this.
+
+```tsx
+import { Form, Formik } from 'formik';
+import { Button } from 'semantic-ui-react';
+import MyTextArea from '../../app/common/form/MyTextArea';
+import MyTextInput from '../../app/common/form/MyTextInput';
+import { useStore } from '../../app/stores/store';
+import * as Yup from 'yup';
+import { observer } from 'mobx-react-lite';
+
+interface Props {
+    setEditMode: (editMode: boolean) => void;
+}
+
+export default observer(function ProfileEditForm({ setEditMode }: Props) {
+    const { profileStore: { profile, updateProfile } } = useStore();
+    return (
+        <Formik
+            initialValues={{ displayName: profile?.displayName, bio: profile?.bio }}
+            onSubmit={values => {
+                updateProfile(values).then(() => {
+                    setEditMode(false);
+                })
+            }}
+            validationSchema={Yup.object({
+                displayName: Yup.string().required()
+            })}
+        >
+            {({ isSubmitting, isValid, dirty }) => (
+                <Form className='ui form'>
+                    <MyTextInput placeholder='Display Name' name='displayName' />
+                    <MyTextArea rows={3} placeholder='Add your bio' name='bio' />
+                    <Button
+                        positive
+                        type='submit'
+                        loading={isSubmitting}
+                        content='Update profile'
+                        floated='right'
+                        disabled={!isValid || !dirty}
+                    />
+                </Form>
+            )}
+        </Formik>
+    )
+})
+```
+
+> Create a ProfileAbout component that will make use of the form, as well as displaying the
+> user bio. Hint: the style “whiteSpace: ‘pre-wrap” will preserve line breaks that are entered
+> into the text area here if added to the span.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useState } from 'react';
+import { Button, Grid, Header, Tab } from 'semantic-ui-react';
+import { useStore } from '../../app/stores/store';
+import ProfileEditForm from './ProfileEditForm';
+
+export default observer(function ProfileAbout() {
+    const { profileStore: { isCurrentUser, profile } } = useStore();
+    const [editMode, setEditMode] = useState(false);
+
+    return (
+        <Tab.Pane>
+            <Grid>
+                <Grid.Column width='16'>
+                    <Header floated='left' icon='user' content={`About ${profile?.displayName}`} />
+                    {isCurrentUser && (
+                        <Button
+                            basic
+                            floated='right'
+                            content={editMode ? 'Cancel' : 'Edit Profile'}
+                            onClick={() => setEditMode(!editMode)}
+                        />
+                    )}
+                </Grid.Column>
+                <Grid.Column width={16}>
+                    {editMode ? <ProfileEditForm setEditMode={setEditMode} />
+                        : <span style={{ whiteSpace: 'pre-wrap' }}>{profile?.bio}</span>}
+                </Grid.Column>
+            </Grid>
+        </Tab.Pane>
+    )
+})
+```
+
+> Update the ProfileContent component to display the profile. You can either pass this
+> down as props or get it directly from the profile store.
+
+```tsx
+import React from 'react';
+import { Tab } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+import ProfileAbout from './ProfileAbout';
+import ProfilePhotos from './ProfilePhotos';
+interface Props {
+    profile: Profile
+}
+
+export default function ProfileContent({ profile }: Props) {
+    const panes = [
+        { menuItem: 'About', render: () => <Tab.Pane><ProfileAbout /></Tab.Pane> },
+        { menuItem: 'Photos', render: () => <Tab.Pane><ProfilePhotos profile={profile} /></Tab.Pane> },
+        { menuItem: 'Events', render: () => <Tab.Pane>Events content</Tab.Pane> },
+        { menuItem: 'Followers', render: () => <Tab.Pane>Followers content</Tab.Pane> },
+        { menuItem: 'Following', render: () => <Tab.Pane>Following content</Tab.Pane> }
+    ];
+
+    return (
+        <Tab
+            menu={{ fluid: true, vertical: true }}
+            menuPosition='right'
+            panes={panes}
+        />
+    )
+}
+```
+
+> Update the Profile Card to show the user bio.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Card, Icon, Image } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileCard({ profile }: Props) {
+    return (
+        <Card as={Link} to={`/profiles/${profile.username}`}>
+            <Image src={profile.image || '/assets/user.png'} />
+            <Card.Content>
+                <Card.Header>{profile.displayName}</Card.Header>
+                <Card.Description>{profile.bio}</Card.Description>
+            </Card.Content>
+            <Card.Content extra>
+                <Icon name='user' />
+            20 followers
+        </Card.Content>
+        </Card>
+    )
+})
+```
+
+> Test it works. If someone has a lot of text in their profile then it will make our attendee
+> cards look quite bad, so add a truncate function to restrict the amount of text displayed in
+> the attendee profile cards.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Card, Icon, Image } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileCard({ profile }: Props) {
+    function truncate(text: string | undefined) {
+        if (text) {
+            return text.length > 40 ? text.substring(0, 37) + '...' : text;
+        }
+    }
+
+    return (
+        <Card as={Link} to={`/profiles/${profile.username}`}>
+            <Image src={profile.image || '/assets/user.png'} />
+            <Card.Content>
+                <Card.Header>{profile.displayName}</Card.Header>
+                <Card.Description>{truncate(profile.bio)}</Card.Description>
+            </Card.Content>
+            <Card.Content extra>
+                <Icon name='user' />
+            20 followers
+        </Card.Content>
+        </Card>
+    )
+})
+```
+
+> Feature complete! Now we can commit our changes into source control in preparation for
+> the next section.
 

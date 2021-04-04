@@ -26,13 +26,13 @@ namespace Application.Activities
                 _context = context;
             }
 
-        public class CommandValidator : AbstractValidator<Command>
-        {
-            public CommandValidator()
+            public class CommandValidator : AbstractValidator<Command>
             {
-                RuleFor(x => x.Activity).SetValidator(new ActivityValidator());
+                public CommandValidator()
+                {
+                    RuleFor(x => x.Activity).SetValidator(new ActivityValidator());
+                }
             }
-        }
 
             public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
             {
