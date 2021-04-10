@@ -8112,3 +8112,911 @@ export default observer(function ProfileCard({ profile }: Props) {
 > Feature complete! Now we can commit our changes into source control in preparation for
 > the next section.
 
+#### Sección 19: SignalR
+
+##### 218 Introducción
+
+* Qué es SignalR
+  * Aporta funcionalidad web en tiempo real a las aplicaciones
+  * Clientes conectados reciben contenido instantáneamente
+  * Es ideal para:
+    * Aplicaciones chat
+    * Dashboards
+    * Monitorización
+* Transportes SignalR
+  * WebSockets
+  * Eventos enviados por el servidor
+  * Long polling
+* Paquete de cliente SignalR
+
+`SignalR` usa el concepto de `Hub` (centro de actividad). Proporciona un `Context` y `Clients`.
+
+Permite a los usuarios conectados llamar a métodos en el servidor.
+
+Puede enviar notificaciones a los clientes conectados.
+
+##### 209 Configurar la entidad comentario
+
+```c#
+using System;
+
+namespace Domain
+{
+    public class Comment
+    {
+        public int Id { get; set; }
+        public string Body { get; set; }
+        public AppUser Author { get; set; }
+        public Activity Activity { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    }
+}
+```
+
+Se modifica `Activity`.
+
+```tsx
+using System;
+using System.Collections.Generic;
+
+namespace Domain
+{
+    public class Activity
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; }
+        public DateTime Date { get; set; }
+        public string Description { get; set; }
+        public string Category { get; set; }
+        public string City { get; set; }
+        public string Venue { get; set; }
+        public bool IsCancelled { get; set; }
+        public ICollection<ActivityAttendee> Attendees { get; set; } = new List<ActivityAttendee>();
+        public ICollection<Comment> Comments { get; set; } = new List<Comment>();
+    }
+}
+```
+
+Se modifica `DataContext`.
+
+```c#
+using Domain;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace Persistence
+{
+    public class DataContext : IdentityDbContext<AppUser>
+    {
+        public DataContext(DbContextOptions options) : base(options)
+        {
+        }
+
+        public DbSet<Activity> Activities { get; set; }
+        public DbSet<ActivityAttendee> ActivityAttendees { get; set; }
+        public DbSet<Photo> Photos { get; set; }
+        public DbSet<Comment> Comments { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+
+            // se define la clave primaria de ActivityAttendee
+            builder.Entity<ActivityAttendee>(x => x.HasKey(aa => new {aa.AppUserId, aa.ActivityId}));
+
+            // dependencia con AppUser y clave extranjera
+            builder.Entity<ActivityAttendee>()
+                .HasOne(u => u.AppUser)
+                .WithMany(a => a.Activities)
+                .HasForeignKey(aa => aa.AppUserId);
+
+            // dependencia con Activity y clave extranjera
+            builder.Entity<ActivityAttendee>()
+                .HasOne(u => u.Activity)
+                .WithMany(a => a.Attendees)
+                .HasForeignKey(aa => aa.ActivityId);
+
+            // Si se borra una actividad se borran todos sus comentarios
+            builder.Entity<Comment>()
+                .HasOne(a => a.Activity)
+                .WithMany(c => c.Comments)
+                .OnDelete(DeleteBehavior.Cascade)
+        }
+    }
+}
+```
+
+Las restricciones se mencionan como ilustración pero en realidad no serán necesarias en la aplicación.
+
+Se crea la migración.
+
+```bash
+[joan@alkaid reactivities]$ dotnet clean
+[joan@alkaid reactivities]$ dotnet ef migrations add CommentEntityAdded -p Persistence/ -s API/
+Build started...
+Build succeeded.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Done. To undo this action, use 'ef migrations remove'
+```
+
+```c#
+using System;
+using Microsoft.EntityFrameworkCore.Migrations;
+
+namespace Persistence.Migrations
+{
+    public partial class CommentEntityAdded : Migration
+    {
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.CreateTable(
+                name: "Comments",
+                columns: table => new
+                {
+                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                        .Annotation("Sqlite:Autoincrement", true),
+                    Body = table.Column<string>(type: "TEXT", nullable: true),
+                    AuthorId = table.Column<string>(type: "TEXT", nullable: true),
+                    ActivityId = table.Column<Guid>(type: "TEXT", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_Comments", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_Comments_Activities_ActivityId",
+                        column: x => x.ActivityId,
+                        principalTable: "Activities",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_Comments_AspNetUsers_AuthorId",
+                        column: x => x.AuthorId,
+                        principalTable: "AspNetUsers",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Comments_ActivityId",
+                table: "Comments",
+                column: "ActivityId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Comments_AuthorId",
+                table: "Comments",
+                column: "AuthorId");
+        }
+
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(
+                name: "Comments");
+        }
+    }
+}
+```
+
+##### 210 Añadir un comentario DTO y su correspondencia
+
+```c#
+using System;
+
+namespace Application.Comments
+{
+    public class CommentDto
+    {
+        public int Id { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public string Body { get; set; }
+        public string Username { get; set; }
+        public string DisplayName { get; set; }
+        public string Image { get; set; }
+    }
+}
+```
+
+`Automapper` podrá establecer la correspondencia entre las 3 primeras propiedades, pero será necesario establecer la configuración de las 3 restantes.
+
+```c#
+using System.Linq;
+using Application.Activities;
+using Application.Comments;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.IsHost).AppUser.UserName));
+            CreateMap<ActivityAttendee, AttendeeDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.AppUser.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.AppUser.UserName))
+                .ForMember(d => d.Bio, opt => opt.MapFrom(s => s.AppUser.Bio))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.AppUser.Photos.FirstOrDefault(f => f.IsMain).Url));
+            CreateMap<AppUser, Profiles.Profile>()
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Photos.FirstOrDefault(f => f.IsMain).Url));
+            CreateMap<Comment, CommentDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.Author.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.Author.UserName))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Author.Photos.FirstOrDefault(f => f.IsMain).Url));
+        }
+    }
+}
+```
+
+##### 211 Añadir el manipulador de crear
+
+```c#
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using Domain;
+using FluentValidation;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Comments
+{
+    public class Create
+    {
+        public class Command : IRequest<Result<CommentDto>>
+        {
+            public string Body { get; set; }
+            public Guid Activityid { get; set; }
+        }
+
+        public class CommandValidator : AbstractValidator<Command>
+        {
+            public CommandValidator()
+            {
+                RuleFor(x => x.Body).NotEmpty();
+            }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<CommentDto>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<CommentDto>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var activity = await _context.Activities.FindAsync(request.Activityid);
+
+                if (activity == null) return null;
+
+                var user = await _context.Users
+                    .Include(p => p.Photos)
+                    .SingleOrDefaultAsync(x => x.UserName == _userAccessor.GetUserName());
+
+                var comment = new Comment
+                {
+                    Author = user,
+                    Activity = activity,
+                    Body = request.Body
+                };
+
+                activity.Comments.Add(comment);
+
+                var success = await _context.SaveChangesAsync() > 0;
+
+                if (success) return Result<CommentDto>.Success(_mapper.Map<CommentDto>(comment));
+
+                return Result<CommentDto>.Failure("Failed to add comment");
+            }
+        }
+    }
+}
+```
+
+##### 212 Añadir un manipulador de lista
+
+```c#
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Comments
+{
+    public class List
+    {
+        public class Query : IRequest<Result<List<CommentDto>>>
+        {
+            public Guid ActivityId { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<List<CommentDto>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            public Handler(DataContext context, IMapper mapper)
+            {
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<List<CommentDto>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var comments = await _context.Comments
+                    .Where(x => x.Activity.Id == request.ActivityId)
+                    .OrderBy(x => x.CreatedAt)
+                    .ProjectTo<CommentDto>(_mapper.ConfigurationProvider)
+                    .ToListAsync();
+
+                return Result<List<CommentDto>>.Success(comments);
+            }
+        }
+    }
+}
+```
+
+##### 213 Añadir un centro SignalR
+
+> Es importante señalar que en este caso no tenemos controlador ni punto final.
+
+Se crea un centro SignalR en el proyecto API.
+
+```c#
+using System;
+using System.Threading.Tasks;
+using Application.Comments;
+using MediatR;
+using Microsoft.AspNetCore.SignalR;
+
+namespace API.SignalR
+{
+    public class ChatHub : Hub
+    {
+        private readonly IMediator _mediator;
+        public ChatHub(IMediator mediator)
+        {
+            _mediator = mediator;
+        }
+
+        public async Task SendComment(Create.Command command)
+        {
+            var comment = await _mediator.Send(command);
+
+            await Clients.Group(command.ActivityId.ToString())
+                .SendAsync("ReceiveComment", comment.Value);
+        }
+
+        public override async Task OnConnectedAsync()
+        {
+            var httpContext = Context.GetHttpContext();
+            var activityId = httpContext.Request.Query["activityId"];
+            await Groups.AddToGroupAsync(Context.ConnectionId, activityId);
+            var result = await _mediator.Send(new List.Query{ActivityId = Guid.Parse(activityId)});
+            await Clients.Caller.SendAsync("LoadComments", result.Value);
+        }
+    }
+}
+```
+
+Se tiene que registrar como un servicio.
+
+```c#
+using Application.Activities;
+using Application.Interfaces;
+using Infrastructure.Photos;
+using Infrastructure.Security;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.OpenApi.Models;
+using Persistence;
+
+namespace API.Extensions
+{
+    public static class ApplicationServicesExtensions
+    {
+        public static IServiceCollection AddApplicationServices(this IServiceCollection services,
+            IConfiguration config)
+        {
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "API", Version = "v1" });
+            });
+            services.AddDbContext<DataContext>(opt =>
+            {
+                opt.UseSqlite(config.GetConnectionString("DefaultConnection"));
+            });
+            services.AddCors(opt =>
+            {
+                opt.AddPolicy("CorsPolicy", policy =>
+                {
+                    policy.AllowAnyMethod().AllowAnyHeader().WithOrigins("http://localhost:3000");
+                });
+            });
+            services.AddMediatR(typeof(List.Handler).Assembly);
+            services.AddAutoMapper(typeof(Application.Core.MappingProfiles).Assembly);
+            services.AddScoped<IUserAccessor, UserAccessor>();
+            services.AddScoped<IPhotoAccessor, PhotoAccessor>();
+            services.Configure<CloudinarySettings>(config.GetSection("Cloudinary"));
+            services.AddSignalR();
+
+            return services;
+        }
+    }
+}
+```
+
+Hay que añadir un punto final en `Startup`.
+
+```c#
+using API.Extensions;
+using API.Middleware;
+using API.SignalR;
+using Application.Activities;
+using FluentValidation.AspNetCore;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Authorization;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+namespace API
+{
+    public class Startup
+    {
+        private readonly IConfiguration _config;
+        public Startup(IConfiguration config)
+        {
+            _config = config;
+        }
+
+        // This method gets called by the runtime. Use this method to add services to the container.
+        public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddControllers(opt => {
+                var policy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
+                opt.Filters.Add(new AuthorizeFilter(policy));
+            })
+                .AddFluentValidation(config =>
+                {
+                    config.RegisterValidatorsFromAssemblyContaining<Create>();
+                });
+            services.AddApplicationServices(_config);
+            services.AddIdentityServices(_config);
+        }
+
+        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+        {
+            app.UseMiddleware<ExceptionMiddleware>();
+
+            if (env.IsDevelopment())
+            {
+                //app.UseDeveloperExceptionPage();
+                app.UseSwagger();
+                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "API v1"));
+            }
+
+            // app.UseHttpsRedirection();
+
+            app.UseRouting();
+
+            app.UseCors("CorsPolicy");
+
+            app.UseAuthentication();
+            app.UseAuthorization();
+
+            app.UseEndpoints(endpoints =>
+            {
+                endpoints.MapControllers();
+                endpoints.MapHub<ChatHub>("/chat");
+            });
+        }
+    }
+}
+```
+
+##### 214 Autenticarse en SignalR
+
+Se inyecta la ficha en el contexto http.
+
+```c#
+using System.Text;
+using System.Threading.Tasks;
+using API.Services;
+using Domain;
+using Infrastructure.Security;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
+using Persistence;
+
+namespace API.Extensions
+{
+    public static class IdentityServiceExtensions
+    {
+        public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration config)
+        {
+            services.AddIdentityCore<AppUser>(opt =>
+            {
+                // Identity utiliza unas opciones por defecto que se pueden configurar. Por ejemplo:
+                opt.Password.RequireNonAlphanumeric = false;
+            })
+            .AddEntityFrameworkStores<DataContext>()
+            .AddSignInManager<SignInManager<AppUser>>();
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["TokenKey"]));
+
+            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(opt =>
+                {
+                    opt.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuerSigningKey = true,
+                        IssuerSigningKey = key,
+                        ValidateIssuer = false,
+                        ValidateAudience = false
+                    };
+                    opt.Events = new JwtBearerEvents
+                    {
+                        OnMessageReceived = context =>
+                        {
+                            var accessToken = context.Request.Query["access_token"];
+                            var path = context.HttpContext.Request.Path;
+                            if (!string.IsNullOrEmpty(accessToken) && (path.StartsWithSegments("/chat")))
+                            {
+                                context.Token = accessToken;
+                            }
+                            return Task.CompletedTask;
+                        }
+                    };
+                });
+
+            services.AddAuthorization(opt => {
+                opt.AddPolicy("IsActivityHost", policy => {
+                    policy.Requirements.Add(new IsHostRequirement());
+                });
+            });
+            services.AddTransient<IAuthorizationHandler, IsHostRequirementHandler>();
+            services.AddScoped<TokenService>();
+
+            return services;
+        }
+    }
+}
+```
+
+##### 215 Añadir SignalR al cliente
+
+Se crea el modelo de comentario.
+
+```tsx
+export interface ChatComment {
+    id: number;
+    createdAt: Date;
+    body: string;
+    username: string;
+    displayName: string;
+    image: string;
+}
+```
+
+Se crea un almacén específico para comentarios.
+
+Se instala la librería signalr.
+
+```bash
+[joan@alkaid client-app]$ npm install @microsoft/signalr
+```
+
+```tsx
+import { HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
+import { makeAutoObservable, runInAction } from "mobx";
+import { ChatComment } from "../models/comment";
+import { store } from "./store";
+
+export default class CommentStore {
+    comments: ChatComment[] = [];
+    hubConnection: HubConnection | null = null;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    createHubConnection = (activityId: string) => {
+        if (store.activityStore.selectedActivity) {
+            this.hubConnection = new HubConnectionBuilder()
+                .withUrl('http://localhost:5000/chat?activityId=' + activityId, {
+                    accessTokenFactory: () => store.userStore.user?.token!
+                })
+                .withAutomaticReconnect()
+                .configureLogging(LogLevel.Information)
+                .build();
+
+            this.hubConnection.start().catch(error => console.log('Error establishing the connection: ' + error));
+
+            this.hubConnection.on('LoadComments', (comments: ChatComment[]) => {
+                runInAction(() => this.comments = comments);
+            })
+
+            this.hubConnection.on('ReceiveComment', (comment: ChatComment) => {
+                runInAction(() => this.comments.push(comment));
+            })
+        }
+    }
+
+    stopHubConnection = () => {
+        this.hubConnection?.stop().catch(error => console.log('Error stopping connection: ' + error));
+    }
+
+    clearComments = () => {
+        this.comments = [];
+        this.stopHubConnection();
+    }
+}
+```
+
+Se incluye en la lista de almacenes.
+
+```tsx
+import { createContext, useContext } from "react";
+import ActivityStore from "./activityStore";
+import CommentStore from "./commentStore";
+import CommonStore from "./commonStore";
+import ModalStore from "./modalStore";
+import ProfileStore from "./profileStore";
+import UserStore from "./userStore";
+
+interface Store {
+    activityStore: ActivityStore;
+    commonStore: CommonStore;
+    userStore: UserStore;
+    modalStore: ModalStore;
+    profileStore: ProfileStore;
+    commentStore: CommentStore;
+}
+
+export const store: Store = {
+    activityStore: new ActivityStore(),
+    commonStore: new CommonStore(),
+    userStore: new UserStore(),
+    modalStore: new ModalStore(),
+    profileStore: new ProfileStore(),
+    commentStore: new CommentStore()
+}
+
+export const StoreContext = createContext(store);
+
+export function useStore() {
+    return useContext(StoreContext);
+}
+```
+
+##### 216 Conectar al centro
+
+Se sustituye el espacio reservado en `ActivityDetailedChat`.
+
+```tsx
+import { observer } from 'mobx-react-lite'
+import React from 'react'
+import { Segment, Header, Comment, Form, Button } from 'semantic-ui-react'
+
+export default observer(function ActivityDetailedChat() {
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                attached='top'
+                inverted
+                color='teal'
+                style={{ border: 'none' }}
+            >
+                <Header>Chat about this event</Header>
+            </Segment>
+            <Segment attached>
+                <Comment.Group>
+                    <Comment>
+                        <Comment.Avatar src='/assets/user.png' />
+                        <Comment.Content>
+                            <Comment.Author as='a'>Matt</Comment.Author>
+                            <Comment.Metadata>
+                                <div>Today at 5:42PM</div>
+                            </Comment.Metadata>
+                            <Comment.Text>How artistic!</Comment.Text>
+                            <Comment.Actions>
+                                <Comment.Action>Reply</Comment.Action>
+                            </Comment.Actions>
+                        </Comment.Content>
+                    </Comment>
+
+                    <Comment>
+                        <Comment.Avatar src='/assets/user.png' />
+                        <Comment.Content>
+                            <Comment.Author as='a'>Joe Henderson</Comment.Author>
+                            <Comment.Metadata>
+                                <div>5 days ago</div>
+                            </Comment.Metadata>
+                            <Comment.Text>Dude, this is awesome. Thanks so much</Comment.Text>
+                            <Comment.Actions>
+                                <Comment.Action>Reply</Comment.Action>
+                            </Comment.Actions>
+                        </Comment.Content>
+                    </Comment>
+
+                    <Form reply>
+                        <Form.TextArea />
+                        <Button
+                            content='Add Reply'
+                            labelPosition='left'
+                            icon='edit'
+                            primary
+                        />
+                    </Form>
+                </Comment.Group>
+            </Segment>
+        </>
+    )
+})
+```
+
+Pasa a ser:
+
+```tsx
+import { observer } from 'mobx-react-lite'
+import React, { useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { Segment, Header, Comment, Form, Button } from 'semantic-ui-react'
+import { useStore } from '../../../app/stores/store'
+
+interface Props {
+    activityId: string;
+}
+
+export default observer(function ActivityDetailedChat({ activityId }: Props) {
+    const { commentStore } = useStore();
+
+    useEffect(() => {
+        if (activityId) {
+            commentStore.createHubConnection(activityId);
+        }
+        return () => {
+            commentStore.clearComments();
+        }
+    }, [commentStore, activityId]);
+
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                attached='top'
+                inverted
+                color='teal'
+                style={{ border: 'none' }}
+            >
+                <Header>Chat about this event</Header>
+            </Segment>
+            <Segment attached>
+                <Comment.Group>
+                    {commentStore.comments.map(comment => (
+                        <Comment key={comment.id}>
+                            <Comment.Avatar src={comment.image || '/assets/user.png'} />
+                            <Comment.Content>
+                                <Comment.Author as={Link} to={`/profiles/${comment.username}`}>
+                                    {comment.displayName}</Comment.Author>
+                                <Comment.Metadata>
+                                    <div>{comment.createdAt}</div>
+                                </Comment.Metadata>
+                                <Comment.Text>{comment.body}</Comment.Text>
+                            </Comment.Content>
+                        </Comment>
+                    ))}
+                    <Form reply>
+                        <Form.TextArea />
+                        <Button
+                            content='Add Reply'
+                            labelPosition='left'
+                            icon='edit'
+                            primary
+                        />
+                    </Form>
+                </Comment.Group>
+            </Segment>
+        </>
+    )
+})
+```
+
+Se ajusta el detalle de actividad.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useEffect } from 'react';
+import { useParams } from 'react-router';
+import { Grid, GridColumn } from 'semantic-ui-react';
+import LoadingComponent from '../../../app/layout/LoadingComponent';
+import { useStore } from '../../../app/stores/store';
+import ActivityDetailedChat from './ActivityDetailedChat';
+import ActivityDetailedHeader from './ActivityDetailedHeader';
+import ActivityDetailedInfo from './ActivityDetailedInfo';
+import ActivityDetailedSidebar from './ActivityDetailedSidebar';
+
+export default observer(function ActivityDetails() {
+    const { activityStore } = useStore();
+    const { selectedActivity: activity, loadActivity, loadingInitial } = activityStore;
+    const { id } = useParams<{ id: string }>()
+
+    useEffect(() => {
+        if (id) loadActivity(id);
+    }, [id, loadActivity])
+
+    if (loadingInitial || !activity) return <LoadingComponent />;
+
+    return (
+        <Grid>
+            <GridColumn width={10}>
+                <ActivityDetailedHeader activity={activity} />
+                <ActivityDetailedInfo activity={activity} />
+                <ActivityDetailedChat activityId={activity.id} />
+            </GridColumn>
+            <Grid.Column width={6}>
+                <ActivityDetailedSidebar activity={activity} />
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+Hay problemas de CORS.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/216.1.png)
+
+> S'ha blocat una sol·licitud multiorigen: La política de mateix origen impedeix llegir el recurs remot en http://localhost:5000/chat/negotiate?activityId=d8b4dcab-a3bf-4914-b58b-688064043db4&negotiateVersion=1. (Motiu: S'esperava que el valor «true» a la capçalera CORS «Access-Control-Allow-Credentials»).
+
+```c#
+services.AddCors(opt =>
+{
+    opt.AddPolicy("CorsPolicy", policy =>
+    {
+        policy
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials() // para evitar el error
+            .WithOrigins("http://localhost:3000");
+    });
+});
+```
+
+Ahora la conexión se realiza correctamente:
+
+> [2021-04-09T20:08:53.592Z] Information: **WebSocket connected to** ws://localhost:5000/chat?`activityId`=d8b4dcab-a3bf-4914-b58b-688064043db4&id=mTmUUbYLk8E8Yfmmfwbp4g&`access_token`=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiYm9iIiwibmFtZWlkIjoiMTMxOTEyZWYtODEzMC00ZmE2LWI3YmMtMjJiMmMyZGJkMjBiIiwiZW1haWwiOiJib2JAdGVzdC5jb20iLCJuYmYiOjE2MTc5OTg5MzAsImV4cCI6MTYxODYwMzczMCwiaWF0IjoxNjE3OTk4OTMwfQ.CMWn78fhvzJcxEuvlncTl7KOZfZuXC0WThaqbsQsoc4.
+
+Se invoca a `LoadComments`, de momento con una lista vacía de comentarios.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/216.2.png)
