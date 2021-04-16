@@ -9020,3 +9020,2791 @@ Ahora la conexión se realiza correctamente:
 Se invoca a `LoadComments`, de momento con una lista vacía de comentarios.
 
 ![](/home/joan/e-learning/udemy/reactivities/doc/images/216.2.png)
+
+##### 217 Enviar comentarios
+
+Se añade el método en el almacén de comentarios.
+
+```tsx
+import { HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
+import { makeAutoObservable, runInAction } from "mobx";
+import { ChatComment } from "../models/comment";
+import { store } from "./store";
+
+export default class CommentStore {
+    comments: ChatComment[] = [];
+    hubConnection: HubConnection | null = null;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    createHubConnection = (activityId: string) => {
+        if (store.activityStore.selectedActivity) {
+            this.hubConnection = new HubConnectionBuilder()
+                .withUrl('http://localhost:5000/chat?activityId=' + activityId, {
+                    accessTokenFactory: () => store.userStore.user?.token!
+                })
+                .withAutomaticReconnect()
+                .configureLogging(LogLevel.Information)
+                .build();
+
+            this.hubConnection.start().catch(error => console.log('Error establishing the connection: ' + error));
+
+            this.hubConnection.on('LoadComments', (comments: ChatComment[]) => {
+                runInAction(() => this.comments = comments);
+            })
+
+            this.hubConnection.on('ReceiveComment', (comment: ChatComment) => {
+                runInAction(() => this.comments.push(comment));
+            })
+        }
+    }
+
+    stopHubConnection = () => {
+        this.hubConnection?.stop().catch(error => console.log('Error stopping connection: ' + error));
+    }
+
+    clearComments = () => {
+        this.comments = [];
+        this.stopHubConnection();
+    }
+
+    addComment = async (values: any) => {
+        values.activityId = store.activityStore.selectedActivity?.id;
+        try {
+            await this.hubConnection?.invoke('SendComment', values);
+        } catch (error) {
+            console.log(error);
+        }
+    }
+}
+```
+
+Se ajusta `ActivityDetailedChat`.
+
+```tsx
+import { Formik, Form } from 'formik'
+import { observer } from 'mobx-react-lite'
+import React, { useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { Segment, Header, Comment, Button } from 'semantic-ui-react'
+import MyTextArea from '../../../app/common/form/MyTextArea'
+import { useStore } from '../../../app/stores/store'
+
+interface Props {
+    activityId: string;
+}
+
+export default observer(function ActivityDetailedChat({ activityId }: Props) {
+    const { commentStore } = useStore();
+
+    useEffect(() => {
+        if (activityId) {
+            commentStore.createHubConnection(activityId);
+        }
+        return () => {
+            commentStore.clearComments();
+        }
+    }, [commentStore, activityId]);
+
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                attached='top'
+                inverted
+                color='teal'
+                style={{ border: 'none' }}
+            >
+                <Header>Chat about this event</Header>
+            </Segment>
+            <Segment attached clearing> // clearing soluciona problema del botón flotando
+                <Comment.Group>
+                    {commentStore.comments.map(comment => (
+                        <Comment key={comment.id}>
+                            <Comment.Avatar src={comment.image || '/assets/user.png'} />
+                            <Comment.Content>
+                                <Comment.Author as={Link} to={`/profiles/${comment.username}`}>
+                                    {comment.displayName}</Comment.Author>
+                                <Comment.Metadata>
+                                    <div>{comment.createdAt}</div>
+                                </Comment.Metadata>
+                                <Comment.Text>{comment.body}</Comment.Text>
+                            </Comment.Content>
+                        </Comment>
+                    ))}
+
+                    <Formik
+                        onSubmit={(values, { resetForm }) =>
+                            commentStore.addComment(values).then(() => resetForm ())}
+
+                        initialValues={{ body: '' }}
+                    >
+                        {({ isSubmitting, isValid }) => (
+                            <Form className='ui form'>
+                                <MyTextArea placeholder='Add comment' name='body' rows={2} />
+                                <Button
+                                    loading={isSubmitting}
+                                    disabled={isSubmitting || !isValid}
+                                    content='Add Reply'
+                                    labelPosition='left'
+                                    icon='edit'
+                                    primary
+                                    type='submit'
+                                    floated='right'
+                                />
+                            </Form>
+                        )}
+                    </Formik>
+                </Comment.Group>
+            </Segment>
+        </>
+    )
+})
+```
+
+##### 218 Agregar validación y solucionar problemas
+
+Se añaden validaciones `yup` en el formulario y se cambia su estructura.
+
+```tsx
+import { Formik, Form, Field, FieldProps } from 'formik'
+import { observer } from 'mobx-react-lite'
+import React, { useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { Segment, Header, Comment, Loader } from 'semantic-ui-react'
+import { useStore } from '../../../app/stores/store'
+import * as Yup from 'yup'
+
+interface Props {
+    activityId: string;
+}
+
+export default observer(function ActivityDetailedChat({ activityId }: Props) {
+    const { commentStore } = useStore();
+
+    useEffect(() => {
+        if (activityId) {
+            commentStore.createHubConnection(activityId);
+        }
+        return () => {
+            commentStore.clearComments();
+        }
+    }, [commentStore, activityId]);
+
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                attached='top'
+                inverted
+                color='teal'
+                style={{ border: 'none' }}
+            >
+                <Header>Chat about this event</Header>
+            </Segment>
+            <Segment attached clearing>
+                <Comment.Group>
+                    {commentStore.comments.map(comment => (
+                        <Comment key={comment.id}>
+                            <Comment.Avatar src={comment.image || '/assets/user.png'} />
+                            <Comment.Content>
+                                <Comment.Author as={Link} to={`/profiles/${comment.username}`}>
+                                    {comment.displayName}</Comment.Author>
+                                <Comment.Metadata>
+                                    <div>{comment.createdAt}</div>
+                                </Comment.Metadata>
+                                <Comment.Text style={{whiteSpace: 'pre-wrap'}}>{comment.body}</Comment.Text>
+                            </Comment.Content>
+                        </Comment>
+                    ))}
+
+                    <Formik
+                        onSubmit={(values, { resetForm }) =>
+                            commentStore.addComment(values).then(() => resetForm ())}
+
+                        initialValues={{ body: '' }}
+                        validationSchema={Yup.object({
+                            body: Yup.string().required()
+                        })}
+                    >
+                        {({ isSubmitting, isValid, handleSubmit }) => (
+                            <Form className='ui form'>
+                                <Field name='body'>
+                                    {(props: FieldProps) => (
+                                        <div style={{position: 'relative'}}>
+                                            <Loader active={isSubmitting} />
+                                            <textarea
+                                                placeholder='Enter your comment (Enter to submit, SHIFT + enter for new line)'
+                                                rows={2}
+                                                {...props.field}
+                                                onKeyPress={e => {
+                                                    if (e.key === 'Enter' && e.shiftKey) {
+                                                        return;
+                                                    }
+                                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                                        e.preventDefault();
+                                                        isValid && handleSubmit();
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+                                </Field>
+                            </Form>
+                        )}
+                    </Formik>
+                </Comment.Group>
+            </Segment>
+        </>
+    )
+})
+```
+
+##### 219 Resolver fechas UTC
+
+En el almacén de comentarios, cuando se obtienen los comentarios, hay que transformar la cadena recibida a  fecha.
+
+```tsx
+import { HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
+import { makeAutoObservable, runInAction } from "mobx";
+import { ChatComment } from "../models/comment";
+import { store } from "./store";
+
+export default class CommentStore {
+    comments: ChatComment[] = [];
+    hubConnection: HubConnection | null = null;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    createHubConnection = (activityId: string) => {
+        if (store.activityStore.selectedActivity) {
+            this.hubConnection = new HubConnectionBuilder()
+                .withUrl('http://localhost:5000/chat?activityId=' + activityId, {
+                    accessTokenFactory: () => store.userStore.user?.token!
+                })
+                .withAutomaticReconnect()
+                .configureLogging(LogLevel.Information)
+                .build();
+
+            this.hubConnection.start().catch(error => console.log('Error establishing the connection: ' + error));
+
+            this.hubConnection.on('LoadComments', (comments: ChatComment[]) => {
+                runInAction(() => {
+                    comments.forEach(comment => {
+                        comment.createdAt = new Date(comment.createdAt + 'Z'); // nos llegan fechas UTC de la BD, hay que forzarlo
+                    })
+                    this.comments = comments
+                });
+            })
+
+            this.hubConnection.on('ReceiveComment', (comment: ChatComment) => {
+                runInAction(() => {
+                    comment.createdAt = new Date(comment.createdAt); // No llega de BD e incluye la Z UTC al final
+                    this.comments.push(comment)
+                });
+            })
+        }
+    }
+
+    stopHubConnection = () => {
+        this.hubConnection?.stop().catch(error => console.log('Error stopping connection: ' + error));
+    }
+
+    clearComments = () => {
+        this.comments = [];
+        this.stopHubConnection();
+    }
+
+    addComment = async (values: any) => {
+        values.activityId = store.activityStore.selectedActivity?.id;
+        try {
+            await this.hubConnection?.invoke('SendComment', values);
+        } catch (error) {
+            console.log(error);
+        }
+    }
+}
+```
+
+Se formatea la presentación de la fecha mediante `formatDistanceToNow`.
+
+```tsx
+import { Formik, Form, Field, FieldProps } from 'formik'
+import { observer } from 'mobx-react-lite'
+import React, { useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { Segment, Header, Comment, Loader } from 'semantic-ui-react'
+import { useStore } from '../../../app/stores/store'
+import * as Yup from 'yup'
+import { formatDistanceToNow } from 'date-fns/esm'
+
+interface Props {
+    activityId: string;
+}
+
+export default observer(function ActivityDetailedChat({ activityId }: Props) {
+    const { commentStore } = useStore();
+
+    useEffect(() => {
+        if (activityId) {
+            commentStore.createHubConnection(activityId);
+        }
+        return () => {
+            commentStore.clearComments();
+        }
+    }, [commentStore, activityId]);
+
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                attached='top'
+                inverted
+                color='teal'
+                style={{ border: 'none' }}
+            >
+                <Header>Chat about this event</Header>
+            </Segment>
+            <Segment attached clearing>
+                <Comment.Group>
+                    {commentStore.comments.map(comment => (
+                        <Comment key={comment.id}>
+                            <Comment.Avatar src={comment.image || '/assets/user.png'} />
+                            <Comment.Content>
+                                <Comment.Author as={Link} to={`/profiles/${comment.username}`}>
+                                    {comment.displayName}</Comment.Author>
+                                <Comment.Metadata>
+                                    <div>{formatDistanceToNow(comment.createdAt)} ago</div>
+                                </Comment.Metadata>
+                                <Comment.Text style={{whiteSpace: 'pre-wrap'}}>{comment.body}</Comment.Text>
+                            </Comment.Content>
+                        </Comment>
+                    ))}
+
+                    <Formik
+                        onSubmit={(values, { resetForm }) =>
+                            commentStore.addComment(values).then(() => resetForm ())}
+
+                        initialValues={{ body: '' }}
+                        validationSchema={Yup.object({
+                            body: Yup.string().required()
+                        })}
+                    >
+                        {({ isSubmitting, isValid, handleSubmit }) => (
+                            <Form className='ui form'>
+                                <Field name='body'>
+                                    {(props: FieldProps) => (
+                                        <div style={{position: 'relative'}}>
+                                            <Loader active={isSubmitting} />
+                                            <textarea
+                                                placeholder='Enter your comment (Enter to submit, SHIFT + enter for new line)'
+                                                rows={2}
+                                                {...props.field}
+                                                onKeyPress={e => {
+                                                    if (e.key === 'Enter' && e.shiftKey) {
+                                                        return;
+                                                    }
+                                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                                        e.preventDefault();
+                                                        isValid && handleSubmit();
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+                                </Field>
+                            </Form>
+                        )}
+                    </Formik>
+                </Comment.Group>
+            </Segment>
+        </>
+    )
+})
+```
+
+Se cambia la ordenación de los comentarios en el manipulador.
+
+```c#
+public async Task<Result<List<CommentDto>>> Handle(Query request, CancellationToken cancellationToken)
+{
+    var comments = await _context.Comments
+        .Where(x => x.Activity.Id == request.ActivityId)
+        .OrderByDescending(x => x.CreatedAt)
+        .ProjectTo<CommentDto>(_mapper.ConfigurationProvider)
+        .ToListAsync();
+
+    return Result<List<CommentDto>>.Success(comments);
+}
+```
+
+En el almacén, en lugar de `push` se usa `unshift`.
+
+```c#
+this.hubConnection.on('ReceiveComment', (comment: ChatComment) => {
+    runInAction(() => {
+        comment.createdAt = new Date(comment.createdAt); // No llega de BD e incluye la Z UTC al final
+        this.comments.unshift(comment)
+    });
+})
+```
+
+Se cambia la posición del formulario.
+
+```tsx
+import { Formik, Form, Field, FieldProps } from 'formik'
+import { observer } from 'mobx-react-lite'
+import React, { useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { Segment, Header, Comment, Loader } from 'semantic-ui-react'
+import { useStore } from '../../../app/stores/store'
+import * as Yup from 'yup'
+import { formatDistanceToNow } from 'date-fns/esm'
+
+interface Props {
+    activityId: string;
+}
+
+export default observer(function ActivityDetailedChat({ activityId }: Props) {
+    const { commentStore } = useStore();
+
+    useEffect(() => {
+        if (activityId) {
+            commentStore.createHubConnection(activityId);
+        }
+        return () => {
+            commentStore.clearComments();
+        }
+    }, [commentStore, activityId]);
+
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                attached='top'
+                inverted
+                color='teal'
+                style={{ border: 'none' }}
+            >
+                <Header>Chat about this event</Header>
+            </Segment>
+            <Segment attached clearing>
+                <Formik
+                    onSubmit={(values, { resetForm }) =>
+                        commentStore.addComment(values).then(() => resetForm())}
+
+                    initialValues={{ body: '' }}
+                    validationSchema={Yup.object({
+                        body: Yup.string().required()
+                    })}
+                >
+                    {({ isSubmitting, isValid, handleSubmit }) => (
+                        <Form className='ui form'>
+                            <Field name='body'>
+                                {(props: FieldProps) => (
+                                    <div style={{ position: 'relative' }}>
+                                        <Loader active={isSubmitting} />
+                                        <textarea
+                                            placeholder='Enter your comment (Enter to submit, SHIFT + enter for new line)'
+                                            rows={2}
+                                            {...props.field}
+                                            onKeyPress={e => {
+                                                if (e.key === 'Enter' && e.shiftKey) {
+                                                    return;
+                                                }
+                                                if (e.key === 'Enter' && !e.shiftKey) {
+                                                    e.preventDefault();
+                                                    isValid && handleSubmit();
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                )}
+                            </Field>
+                        </Form>
+                    )}
+                </Formik>
+                <Comment.Group>
+                    {commentStore.comments.map(comment => (
+                        <Comment key={comment.id}>
+                            <Comment.Avatar src={comment.image || '/assets/user.png'} />
+                            <Comment.Content>
+                                <Comment.Author as={Link} to={`/profiles/${comment.username}`}>
+                                    {comment.displayName}</Comment.Author>
+                                <Comment.Metadata>
+                                    <div>{formatDistanceToNow(comment.createdAt)} ago</div>
+                                </Comment.Metadata>
+                                <Comment.Text style={{ whiteSpace: 'pre-wrap' }}>{comment.body}</Comment.Text>
+                            </Comment.Content>
+                        </Comment>
+                    ))}
+                </Comment.Group>
+            </Segment>
+        </>
+    )
+})
+```
+
+Cada vez que se accede a una actividad diferente se produce un error de conexión.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/219.1.png)
+
+Se crea un método en el almacén de actividades.
+
+```tsx
+clearSelectedActivity = () => {
+    this.selectedActivity = undefined;
+}
+```
+
+Se usa en `ActivityDetails`, en `useEffect`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useEffect } from 'react';
+import { useParams } from 'react-router';
+import { Grid, GridColumn } from 'semantic-ui-react';
+import LoadingComponent from '../../../app/layout/LoadingComponent';
+import { useStore } from '../../../app/stores/store';
+import ActivityDetailedChat from './ActivityDetailedChat';
+import ActivityDetailedHeader from './ActivityDetailedHeader';
+import ActivityDetailedInfo from './ActivityDetailedInfo';
+import ActivityDetailedSidebar from './ActivityDetailedSidebar';
+
+export default observer(function ActivityDetails() {
+    const { activityStore } = useStore();
+    const { selectedActivity: activity, loadActivity, loadingInitial, clearSelectedActivity } = activityStore;
+    const { id } = useParams<{ id: string }>()
+
+    useEffect(() => {
+        if (id) loadActivity(id);
+        return () => clearSelectedActivity();
+    }, [id, loadActivity, clearSelectedActivity])
+
+    if (loadingInitial || !activity) return <LoadingComponent />;
+
+    return (
+        <Grid>
+            <GridColumn width={10}>
+                <ActivityDetailedHeader activity={activity} />
+                <ActivityDetailedInfo activity={activity} />
+                <ActivityDetailedChat activityId={activity.id} />
+            </GridColumn>
+            <Grid.Column width={6}>
+                <ActivityDetailedSidebar activity={activity} />
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+##### 220 Sumario de la sección 19
+
+#### Sección 20: Característica Seguidores/Siguiendo
+
+##### 221 introducción
+
+* Implementar la característica siguiendo de final a final
+* Relación de auto referencia muchos a muchos
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/221.1.png)
+
+##### 222 Añadir una entidad de unión
+
+Se crea una nueva clase de `Domain` llamada `UserFollowing`.
+
+```c#
+namespace Domain
+{
+    public class UserFollowing
+    {
+        public string ObserverId { get; set; }
+        public AppUser Observer { get; set; }
+        public string TargetId { get; set; }
+        public AppUser Target { get; set; }
+    }
+}
+```
+
+Se añade la relación a `AppUser`.
+
+```c#
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Identity;
+
+namespace Domain
+{
+    public class AppUser : IdentityUser
+    {
+        public string  DisplayName { get; set; }
+        public string Bio { get; set; }
+        public ICollection<ActivityAttendee> Activities { get; set; }
+        public ICollection<Photo> Photos { get; set; }
+        public ICollection<UserFollowing> Followings { get; set; }
+        public ICollection<UserFollowing> Followers { get; set; }
+    }
+}
+```
+
+Se incluye la relación en `DataContext`.
+
+```c#
+using Domain;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace Persistence
+{
+    public class DataContext : IdentityDbContext<AppUser>
+    {
+        public DataContext(DbContextOptions options) : base(options)
+        {
+        }
+
+        public DbSet<Activity> Activities { get; set; }
+        public DbSet<ActivityAttendee> ActivityAttendees { get; set; }
+        public DbSet<Photo> Photos { get; set; }
+        public DbSet<Comment> Comments { get; set; }
+        public DbSet<UserFollowing> UserFollowings { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+
+            // se define la clave primaria de ActivityAttendee
+            builder.Entity<ActivityAttendee>(x => x.HasKey(aa => new {aa.AppUserId, aa.ActivityId}));
+
+            // dependencia con AppUser y clave extranjera
+            builder.Entity<ActivityAttendee>()
+                .HasOne(u => u.AppUser)
+                .WithMany(a => a.Activities)
+                .HasForeignKey(aa => aa.AppUserId);
+
+            // dependencia con Activity y clave extranjera
+            builder.Entity<ActivityAttendee>()
+                .HasOne(u => u.Activity)
+                .WithMany(a => a.Attendees)
+                .HasForeignKey(aa => aa.ActivityId);
+
+            // Si se borra una actividad se borran todos sus comentarios
+            builder.Entity<Comment>()
+                .HasOne(a => a.Activity)
+                .WithMany(c => c.Comments)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.Entity<UserFollowing>(b =>
+            {
+                b.HasKey(k => new {k.ObserverId, k.TargetId});
+
+                b.HasOne(o => o.Observer)
+                    .WithMany(f => f.Followings)
+                    .HasForeignKey(o => o.ObserverId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasOne(o => o.Target)
+                    .WithMany(f => f.Followers)
+                    .HasForeignKey(o => o.TargetId)
+                    .OnDelete(DeleteBehavior.Cascade);              
+            });
+        }
+    }
+}
+```
+
+Se añade una migración. Es necesario parar el servidor `API`.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations add FollowingEntityAdded -p Persistence/ -s API/
+Build started...
+Build succeeded.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.4 initialized 'DataContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite' with options: None
+Done. To undo this action, use 'ef migrations remove'
+```
+
+```c#
+using Microsoft.EntityFrameworkCore.Migrations;
+
+namespace Persistence.Migrations
+{
+    public partial class FollowingEntityAdded : Migration
+    {
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.CreateTable(
+                name: "UserFollowings",
+                columns: table => new
+                {
+                    ObserverId = table.Column<string>(type: "TEXT", nullable: false),
+                    TargetId = table.Column<string>(type: "TEXT", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_UserFollowings", x => new { x.ObserverId, x.TargetId });
+                    table.ForeignKey(
+                        name: "FK_UserFollowings_AspNetUsers_ObserverId",
+                        column: x => x.ObserverId,
+                        principalTable: "AspNetUsers",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_UserFollowings_AspNetUsers_TargetId",
+                        column: x => x.TargetId,
+                        principalTable: "AspNetUsers",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_UserFollowings_TargetId",
+                table: "UserFollowings",
+                column: "TargetId");
+        }
+
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(
+                name: "UserFollowings");
+        }
+    }
+}
+```
+
+##### 23 Añadir un manipulador para siguiendo
+
+Se crea la clase `FollowToggle`.
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using Domain;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Followers
+{
+    public class FollowToggle
+    {
+        public class Command : IRequest<Result<Unit>>
+        {
+            public string TargetUsername { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Command, Result<Unit>>
+        {
+            private readonly DataContext _context;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _context = context;
+            }
+
+            public async Task<Result<Unit>> Handle(Command request, CancellationToken cancellationToken)
+            {
+                var  observer = await _context.Users.FirstOrDefaultAsync(x =>
+                    x.UserName == _userAccessor.GetUserName());
+
+                var target = await _context.Users.FirstOrDefaultAsync(x =>
+                    x.UserName == request.TargetUsername);
+
+                if (target == null) return null;
+
+                var following = await _context.UserFollowings.FindAsync(observer.Id, target.Id);
+
+                if (following == null)
+                {
+                    following = new UserFollowing
+                    {
+                        Observer = observer,
+                        Target = target
+                    };
+
+                    _context.UserFollowings.Add(following);
+                }
+                else
+                {
+                    _context.UserFollowings.Remove(following);
+                }
+
+                var success = await _context.SaveChangesAsync() > 0;
+
+                if (success) return Result<Unit>.Success(Unit.Value);
+
+                return Result<Unit>.Failure("Failed to update following");
+            }
+        }
+    }
+}
+```
+
+##### 224 Añadir el controlador
+
+Se crea la clase `FollowController`.
+
+```c#
+using System.Threading.Tasks;
+using Application.Followers;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class FollowController : BaseApiController
+    {
+        [HttpPost("{username")]
+        public async Task<IActionResult> Follow(string username)
+        {
+            return HandleResult(await Mediator.Send(new FollowToggle.Command{TargetUsername = username}));
+        }
+    }
+}
+```
+
+Se prueba el punto final con `Postman` y observando el cambio directamente en la base de datos: seguir y dejar de seguir.
+
+##### 225 Actualizar la clase de perfil
+
+Para incorporar el comportamiento de seguidores.
+
+```c#
+using System.Collections.Generic;
+using Domain;
+
+namespace Application.Profiles
+{
+    public class Profile
+    {
+        public string Username { get; set; }
+        public string DisplayName { get; set; }
+        public string Bio { get; set; }
+        public string Image { get; set; }
+        public bool Following { get; set; } // indica si es seguido por el usuario
+        public int FollowersCount { get; set; } // número de seguidores
+        public int FollowingCount { get; set; } // número de seguidos
+        public ICollection<Photo> Photos { get; set; }
+    }
+}
+```
+
+Se ajusta `AutoMapper`.
+
+```c#
+using System.Linq;
+using Application.Activities;
+using Application.Comments;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.IsHost).AppUser.UserName));
+            CreateMap<ActivityAttendee, AttendeeDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.AppUser.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.AppUser.UserName))
+                .ForMember(d => d.Bio, opt => opt.MapFrom(s => s.AppUser.Bio))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.AppUser.Photos.FirstOrDefault(f => f.IsMain).Url));
+            CreateMap<AppUser, Profiles.Profile>()
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Photos.FirstOrDefault(f => f.IsMain).Url))
+                .ForMember(d => d.FollowersCount, o => o.MapFrom(s => s.Followers.Count))
+                .ForMember(d => d.FollowingCount, o => o.MapFrom(s => s.Followings.Count));
+            CreateMap<Comment, CommentDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.Author.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.Author.UserName))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Author.Photos.FirstOrDefault(f => f.IsMain).Url));
+        }
+    }
+}
+```
+
+##### 226 Retornar una lista de seguidores
+
+Se crea una consulta.
+
+```c#
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Followers
+{
+    public class List
+    {
+        public class Query : IRequest<Result<List<Profiles.Profile>>>
+        {
+            public string Predicate { get; set; }
+            public string Username { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<List<Profiles.Profile>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            public Handler(DataContext context, IMapper mapper)
+            {
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<List<Profiles.Profile>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var profiles = new List<Profiles.Profile>();
+
+                switch (request.Predicate)
+                {
+                    case "followers":
+                        profiles = await _context.UserFollowings.Where(x => x.Target.UserName == request.Username)
+                            .Select(u => u.Observer)
+                            .ProjectTo<Profiles.Profile>(_mapper.ConfigurationProvider)
+                            .ToListAsync();
+                        break;
+
+                    case "following":
+                        profiles = await _context.UserFollowings.Where(x => x.Observer.UserName == request.Username)
+                            .Select(u => u.Target)
+                            .ProjectTo<Profiles.Profile>(_mapper.ConfigurationProvider)
+                            .ToListAsync();
+                        break;
+                }
+
+                return Result<List<Profiles.Profile>>.Success(profiles);
+            }
+        }
+    }
+}
+```
+
+Se añade un punto final a `FololwController`.
+
+```c#
+using System.Threading.Tasks;
+using Application.Followers;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    public class FollowController : BaseApiController
+    {
+        [HttpPost("{username}")]
+        public async Task<IActionResult> Follow(string username)
+        {
+            return HandleResult(await Mediator.Send(new FollowToggle.Command{TargetUsername = username}));
+        }
+
+        [HttpGet("{username}")]
+        public async Task<IActionResult> GetFollowings(string username, string predicate)
+        {
+            return HandleResult(await Mediator.Send(new List.Query{Username = username,
+                Predicate = predicate}));
+        }
+    }
+}
+```
+
+Se hacen las pruebas con `postman`.
+
+##### 227 Añadir la propiedad siguiendo a la configuración de correspondencias
+
+Hay que dar acceso al usuario actual en `MappingProfiles`. El `List` se accede al usuario mediante `IUserAccessor` y se proyecta en la configuración de `AutoMapper` como parámetro.
+
+```c#
+using System.Linq;
+using Application.Activities;
+using Application.Comments;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            string currentUsername = null;
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.IsHost).AppUser.UserName));
+            CreateMap<ActivityAttendee, AttendeeDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.AppUser.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.AppUser.UserName))
+                .ForMember(d => d.Bio, opt => opt.MapFrom(s => s.AppUser.Bio))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.AppUser.Photos.FirstOrDefault(f => f.IsMain).Url));
+            CreateMap<AppUser, Profiles.Profile>()
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Photos.FirstOrDefault(f => f.IsMain).Url))
+                .ForMember(d => d.FollowersCount, o => o.MapFrom(s => s.Followers.Count))
+                .ForMember(d => d.FollowingCount, o => o.MapFrom(s => s.Followings.Count))
+                .ForMember(d => d.Following,
+                    o => o.MapFrom(s => s.Followers.Any(x => x.Observer.UserName == currentUsername)));
+            CreateMap<Comment, CommentDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.Author.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.Author.UserName))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Author.Photos.FirstOrDefault(f => f.IsMain).Url));
+        }
+    }
+}
+```
+
+```c#
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Followers
+{
+    public class List
+    {
+        public class Query : IRequest<Result<List<Profiles.Profile>>>
+        {
+            public string Predicate { get; set; }
+            public string Username { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<List<Profiles.Profile>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<List<Profiles.Profile>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var profiles = new List<Profiles.Profile>();
+
+                switch (request.Predicate)
+                {
+                    case "followers":
+                        profiles = await _context.UserFollowings.Where(x => x.Target.UserName == request.Username)
+                            .Select(u => u.Observer)
+                            .ProjectTo<Profiles.Profile>(_mapper.ConfigurationProvider,
+                                new {currentUsername = _userAccessor.GetUserName()})
+                            .ToListAsync();
+                        break;
+
+                    case "following":
+                        profiles = await _context.UserFollowings.Where(x => x.Observer.UserName == request.Username)
+                            .Select(u => u.Target)
+                            .ProjectTo<Profiles.Profile>(_mapper.ConfigurationProvider)
+                            .ToListAsync();
+                        break;
+                }
+
+                return Result<List<Profiles.Profile>>.Success(profiles);
+            }
+        }
+    }
+}
+```
+
+##### 228 Actualizar los otros manipuladores con la propiedad "siguiendo"
+
+Se comienza por `AttendeeDto`, que se usa en la lista de actividades y en el detalle de actividad.
+
+```c#
+namespace Application.Activities
+{
+    public class AttendeeDto
+    {
+        public string Username { get; set; }
+        public string DisplayName { get; set; }
+        public string Bio { get; set; }
+        public string Image { get; set; }
+        public bool Following { get; set; }
+        public int FollowersCount { get; set; }
+        public int FollowingCount { get; set; }
+    }
+}
+```
+
+```c#
+using System.Linq;
+using Application.Activities;
+using Application.Comments;
+using AutoMapper;
+using Domain;
+
+namespace Application.Core
+{
+    public class MappingProfiles : Profile
+    {
+        public MappingProfiles()
+        {
+            string currentUsername = null;
+            CreateMap<Activity, Activity>();
+            CreateMap<Activity, ActivityDto>()
+                .ForMember(d => d.HostUsername, opt => opt.MapFrom(s => s.Attendees
+                    .FirstOrDefault(x => x.IsHost).AppUser.UserName));
+            CreateMap<ActivityAttendee, AttendeeDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.AppUser.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.AppUser.UserName))
+                .ForMember(d => d.Bio, opt => opt.MapFrom(s => s.AppUser.Bio))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.AppUser.Photos.FirstOrDefault(f => f.IsMain).Url))
+                .ForMember(d => d.FollowersCount, o => o.MapFrom(s => s.AppUser.Followers.Count))
+                .ForMember(d => d.FollowingCount, o => o.MapFrom(s => s.AppUser.Followings.Count))
+                .ForMember(d => d.Following,
+                    o => o.MapFrom(s => s.AppUser.Followers.Any(x => x.Observer.UserName == currentUsername)));
+            CreateMap<AppUser, Profiles.Profile>()
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Photos.FirstOrDefault(f => f.IsMain).Url))
+                .ForMember(d => d.FollowersCount, o => o.MapFrom(s => s.Followers.Count))
+                .ForMember(d => d.FollowingCount, o => o.MapFrom(s => s.Followings.Count))
+                .ForMember(d => d.Following,
+                    o => o.MapFrom(s => s.Followers.Any(x => x.Observer.UserName == currentUsername)));
+            CreateMap<Comment, CommentDto>()
+                .ForMember(d => d.DisplayName, opt => opt.MapFrom(s => s.Author.DisplayName))
+                .ForMember(d => d.Username, opt => opt.MapFrom(s => s.Author.UserName))
+                .ForMember(d => d.Image, o => o.MapFrom(s => s.Author.Photos.FirstOrDefault(f => f.IsMain).Url));
+        }
+    }
+}
+```
+
+```c#
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class List
+    {
+        public class Query : IRequest<Result<List<ActivityDto>>> { }
+
+        public class Handler : IRequestHandler<Query, Result<List<ActivityDto>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<List<ActivityDto>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var activities = await _context.Activities
+                    .ProjectTo<ActivityDto>(_mapper.ConfigurationProvider,
+                        new {currentUsername = _userAccessor.GetUserName()})
+                    .ToListAsync();
+
+                return Result<List<ActivityDto>>.Success(activities);
+            }
+        }
+    }
+}
+```
+
+```c#
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class Details
+    {
+        public class Query : IRequest<Result<ActivityDto>>
+        {
+            public Guid Id { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<ActivityDto>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<ActivityDto>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var activity = await _context.Activities
+                    .ProjectTo<ActivityDto>(_mapper.ConfigurationProvider,
+                        new {currentUsername = _userAccessor.GetUserName()})
+                    .FirstOrDefaultAsync(x => x.Id == request.Id); // Projection no admite FindAsync
+
+                return Result<ActivityDto>.Success(activity);
+            }
+        }
+    }
+}
+```
+
+Se ajusta la consulta de un perfil.
+
+```c#
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Profiles
+{
+    public class Details
+    {
+        public class Query : IRequest<Result<Profile>>
+        {
+            public string Username { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<Profile>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<Profile>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var user = await _context.Users
+                    .ProjectTo<Profile>(_mapper.ConfigurationProvider,
+                        new { currentUsername = _userAccessor.GetUserName() })
+                    .SingleOrDefaultAsync(x => x.Username == request.Username);
+
+                if (user == null) return null;
+
+                return Result<Profile>.Success(user);
+            }
+        }
+    }
+}
+```
+
+Lo mismo se aplica a la lista de seguidos.
+
+```c#
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using Persistence;
+
+namespace Application.Followers
+{
+    public class List
+    {
+        public class Query : IRequest<Result<List<Profiles.Profile>>>
+        {
+            public string Predicate { get; set; }
+            public string Username { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<List<Profiles.Profile>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<List<Profiles.Profile>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var profiles = new List<Profiles.Profile>();
+
+                switch (request.Predicate)
+                {
+                    case "followers":
+                        profiles = await _context.UserFollowings.Where(x => x.Target.UserName == request.Username)
+                            .Select(u => u.Observer)
+                            .ProjectTo<Profiles.Profile>(_mapper.ConfigurationProvider,
+                                new {currentUsername = _userAccessor.GetUserName()})
+                            .ToListAsync();
+                        break;
+
+                    case "following":
+                        profiles = await _context.UserFollowings.Where(x => x.Observer.UserName == request.Username)
+                            .Select(u => u.Target)
+                            .ProjectTo<Profiles.Profile>(_mapper.ConfigurationProvider,
+                                new {currentUsername = _userAccessor.GetUserName()})
+                            .ToListAsync();
+                        break;
+                }
+
+                return Result<List<Profiles.Profile>>.Success(profiles);
+            }
+        }
+    }
+}
+```
+
+##### 229 Añadir la IU para seguidores
+
+Se añaden las propiedades al `Profile` y se utiliza en diferentes componentes.
+
+```tsx
+import { User } from "./user";
+
+export interface Profile {
+    username: string;
+    displayName: string;
+    image?: string;
+    bio?: string;
+    followersCount: number;
+    followingCount: number;
+    following: boolean;
+    photos?: Photo[];
+}
+
+export class Profile implements Profile {
+    constructor(user: User) {
+        this.username = user.username;
+        this.displayName = user.displayName;
+        this.image = user.image;
+    }
+}
+
+export interface Photo {
+    id: string;
+    url: string;
+    isMain: boolean;
+}
+```
+
+```tsx
+import React from 'react'
+import { Segment, List, Label, Item, Image } from 'semantic-ui-react'
+import { Link } from 'react-router-dom'
+import { observer } from 'mobx-react-lite'
+import { Activity } from '../../../app/models/activity'
+
+interface Props {
+    activity: Activity;
+}
+
+export default observer(function ActivityDetailedSidebar({ activity: { attendees, host } }: Props) {
+    if (!attendees) return null;
+
+    return (
+        <>
+            <Segment
+                textAlign='center'
+                style={{ border: 'none' }}
+                attached='top'
+                secondary
+                inverted
+                color='teal'
+            >
+                {attendees.length} {attendees.length === 1 ? 'Person' : 'People'} going
+            </Segment>
+            <Segment attached>
+                <List relaxed divided>
+                    {attendees.map(attendee => (
+                        <Item style={{ position: 'relative' }} key={attendee.username}>
+                            {attendee.username === host?.username &&
+                                <Label
+                                    style={{ position: 'absolute' }}
+                                    color='orange'
+                                    ribbon='right'
+                                >
+                                    Host
+                                </Label>
+                            }
+                            <Image size='tiny' src={attendee.image || '/assets/user.png'} />
+                            <Item.Content verticalAlign='middle'>
+                                <Item.Header as='h3'>
+                                    <Link to={`/profiles/${attendee.username}`}>{attendee.displayName}</Link>
+                                </Item.Header>
+                                {attendee.following &&
+                                    <Item.Extra style={{ color: 'orange' }}>Following</Item.Extra>}
+                            </Item.Content>
+                        </Item>
+                    ))}
+                </List>
+            </Segment>
+        </>
+    )
+})
+```
+
+```c#
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Image, List, Popup } from 'semantic-ui-react';
+import { Profile } from '../../../app/models/profile';
+import ProfileCard from '../../profiles/ProfileCard';
+
+interface Props {
+    attendees: Profile[];
+}
+
+export default observer(function ActivityListItemAttendee({ attendees }: Props) {
+    const styles = {
+        borderColor: 'orange',
+        borderWidth: 2
+    }
+
+    return (
+        <List horizontal>
+            {attendees.map(attendee => (
+                <Popup
+                    hoverable
+                    key={attendee.username}
+                    trigger={
+                        <List.Item key={attendee.username} as={Link} to={`/profiles/${attendee.username}`}>
+                            <Image
+                                size='mini'
+                                circular src={attendee.image || '/assets/user.png'}
+                                bordered
+                                style={attendee.following ? styles : null}
+                            />
+                        </List.Item>
+                    }
+                >
+                    <Popup.Content>
+                        <ProfileCard profile={attendee} />
+                    </Popup.Content>
+                </Popup>
+            ))}
+        </List>
+    )
+})
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Button, Divider, Grid, Header, Item, Reveal, Segment, Statistic } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileHeader({ profile }: Props) {
+    return (
+        <Segment>
+            <Grid>
+                <Grid.Column width={12}>
+                    <Item.Group>
+                        <Item>
+                            <Item.Image avatar size='small' src={profile?.image || '/assets/user.png'} />
+                            <Item.Content verticalAlign='middle'>
+                                <Header as='h1' content={profile?.displayName} />
+                            </Item.Content>
+                        </Item>
+                    </Item.Group>
+                </Grid.Column>
+                <Grid.Column width={4}>
+                    <Statistic.Group widths={2}>
+                        <Statistic label='Followers' value={profile.followersCount} />
+                        <Statistic label='Following' value={profile.followingCount} />
+                    </Statistic.Group>
+                    <Divider />
+                    <Reveal animated='move'>
+                        <Reveal.Content visible style={{ width: '100%' }}>
+                            <Button fluid color='teal' content='Following' />
+                        </Reveal.Content>
+                        <Reveal.Content hidden style={{ width: '100%' }}>
+                            <Button
+                                fluid
+                                basic
+                                color={true ? 'red' : 'green'}
+                                content={true ? 'Unfollow' : 'Follow'}
+                            />
+                        </Reveal.Content>
+                    </Reveal>
+                </Grid.Column>
+            </Grid>
+        </Segment>
+    )
+})
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Card, Icon, Image } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileCard({ profile }: Props) {
+    function truncate(text: string | undefined) {
+        if (text) {
+            return text.length > 40 ? text.substring(0, 37) + '...' : text;
+        }
+    }
+
+    return (
+        <Card as={Link} to={`/profiles/${profile.username}`}>
+            <Image src={profile.image || '/assets/user.png'} />
+            <Card.Content>
+                <Card.Header>{profile.displayName}</Card.Header>
+                <Card.Description>{truncate(profile.bio)}</Card.Description>
+            </Card.Content>
+            <Card.Content extra>
+                <Icon name='user' />
+            {profile.followersCount} followers
+        </Card.Content>
+        </Card>
+    )
+})
+```
+
+##### 230 Añadir métodos para seguir y dejar de seguir
+
+Hay bastantes lugares de la aplicación a tener en cuenta al cambiar el seguimiento. Se comienza por adaptar `agent.ts` añadiendo un método para actualizar el seguimiento.
+
+```tsx
+import axios, { AxiosError, AxiosResponse } from 'axios';
+import { toast } from 'react-toastify';
+import { history } from '../..';
+import { Activity, ActivityFormValues } from '../models/activity';
+import { Photo, Profile } from '../models/profile';
+import { User, UserFormValues } from '../models/user';
+import { store } from '../stores/store';
+
+const sleep = (delay: number) => {
+    return new Promise((resolve) => {
+        setTimeout(resolve, delay);
+    })
+}
+
+axios.defaults.baseURL = 'http://localhost:5000/api';
+
+axios.interceptors.request.use(config => {
+    const token = store.commonStore.token;
+    if (token) config.headers.Authorization = `Bearer ${token}`
+    return config;
+})
+
+axios.interceptors.response.use(async response => {
+    await sleep(1000);
+    return response;
+}, (error: AxiosError) => {
+    const {data, status, config} = error.response!;
+    switch (status) {
+        case 400:
+            if (typeof data === 'string') {
+                toast.error(data);
+            }
+            if (config.method === 'get' && data.errors.hasOwnProperty('id')) {
+                history.push('/not-found');
+            }
+            if (data.errors) { // es un error de validación
+                const modalStateErrors = [];
+                for (const key in data.errors) {
+                    if (data.errors[key]) {
+                        modalStateErrors.push(data.errors[key]);
+                    }
+                }
+                throw modalStateErrors.flat();
+            }
+            break;
+        case 401:
+            toast.error('unauthorised');
+            break;
+        case 404:
+            history.push('/not-found');
+            break;
+        case 500:
+            store.commonStore.setServerError(data);
+            history.push('/server-error');
+            break;
+    }
+    return Promise.reject(error);
+})
+
+const responseBody = <T>(response: AxiosResponse<T>) => response.data;
+
+const requests = {
+    get: <T>(url: string) => axios.get<T>(url).then(responseBody),
+    post: <T>(url: string, body: {}) => axios.post<T>(url, body).then(responseBody),
+    put: <T>(url: string, body: {}) => axios.put<T>(url, body).then(responseBody),
+    del: <T>(url: string) => axios.delete<T>(url).then(responseBody)
+}
+
+const Activities = {
+    list: () => requests.get<Activity[]>('/activities'),
+    details: (id: string) => requests.get<Activity>(`/activities/${id}`),
+    create: (activity: ActivityFormValues) => requests.post<void>('/activities', activity),
+    update: (activity: ActivityFormValues) => requests.put<void>(`/activities/${activity.id}`, activity),
+    delete: (id: string) => requests.del<void>(`/activities/${id}`),
+    attend: (id: string) => requests.post<void>(`/activities/${id}/attend`, {})
+}
+
+const Account = {
+    current: () => requests.get<User>('/account'),
+    login: (user: UserFormValues) => requests.post<User>('/account/login', user),
+    register: (user: UserFormValues) => requests.post<User>('/account/register', user)
+}
+
+const Profiles = {
+    get: (username: string) => requests.get<Profile>(`/profiles/${username}`),
+    uploadPhoto: (file: Blob) => {
+        let formData = new FormData();
+        formData.append('File', file);
+        return axios.post<Photo>('photos', formData, {
+            headers: {'Content-type': 'multipart/form-data'}
+        })
+    },
+    setMainPhoto: (id: string) => requests.post(`/photos/${id}/setmain`, {}),
+    deletePhoto: (id: string) => requests.del(`/photos/${id}`),
+    updateProfile: (profile: Partial<Profile>) => requests.put(`/profiles`, profile),
+    updateFollowing: (username: string) => requests.post(`/follow/${username}`, {})
+}
+
+const agent = {
+    Activities,
+    Account,
+    Profiles
+}
+
+export default agent;
+```
+
+A continuación se ajustan los almacenes que usan esta información.
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Activity, ActivityFormValues } from "../models/activity";
+import { format } from 'date-fns';
+import { store } from "./store";
+import { Profile } from "../models/profile";
+
+export default class ActivityStore {
+    //activities: Activity[] = [];
+    activityRegistry = new Map<string, Activity>();
+    selectedActivity: Activity | undefined = undefined;
+    editMode = false;
+    loading = false;
+    loadingInitial = false;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get activitiesByDate() {
+        return Array.from(this.activityRegistry.values()).sort((a, b) =>
+            a.date!.getTime() - b.date!.getTime());
+    }
+
+    get groupedActivities() {
+        return Object.entries(
+            this.activitiesByDate.reduce((activities, activity) => {
+                const date = format(activity.date!, 'dd MMM yyyy');
+                activities[date] = activities[date] ? [...activities[date], activity] : [activity];
+                return activities;
+            }, {} as { [key: string]: Activity[] })
+        )
+    }
+
+    loadActivities = async () => {
+        this.setLoadingInitial(true);
+        try {
+            const activities = await agent.Activities.list();
+            activities.forEach(activity => {
+                this.setActivity(activity);
+            })
+            this.setLoadingInitial(false);
+        } catch (error) {
+            console.log(error);
+            this.setLoadingInitial(false);
+        }
+    }
+
+    loadActivity = async (id: string) => {
+        let activity = this.getActivity(id);
+        if (activity) {
+            this.selectedActivity = activity;
+            return activity;
+        } else {
+            this.setLoadingInitial(true);
+            try {
+                activity = await agent.Activities.details(id);
+                this.setActivity(activity);
+                runInAction(() => {
+                    this.selectedActivity = activity;
+                })
+                this.setLoadingInitial(false);
+                return activity;
+            } catch (error) {
+                console.log(error);
+                this.setLoadingInitial(false);
+            }
+        }
+    }
+
+    private setActivity = (activity: Activity) => {
+        const user = store.userStore.user; // se obtiene el usuario
+        if (user) {
+            activity.isGoing = activity.attendees?.some(
+                a => a.username === user.username
+            )
+            activity.isHost = activity.hostUsername === user.username;
+            activity.host = activity.attendees?.find(x => x.username === activity.hostUsername);
+        }
+        activity.date = new Date(activity.date!);
+        this.activityRegistry.set(activity.id, activity);
+    }
+
+    private getActivity = (id: string) => {
+        return this.activityRegistry.get(id);
+    }
+
+    setLoadingInitial = (state: boolean) => {
+        this.loadingInitial = state;
+    }
+
+    createActivity = async (activity: ActivityFormValues) => {
+        const user = store.userStore.user;
+        const attendee = new Profile(user!);
+        try {
+            await agent.Activities.create(activity);
+            const newActivity = new Activity(activity);
+            newActivity.hostUsername = user!.username;
+            newActivity.attendees = [attendee];
+            this.setActivity(newActivity);
+            runInAction(() => {
+                this.selectedActivity = newActivity;
+            })
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    updateActivity = async (activity: ActivityFormValues) => {
+        try {
+            await agent.Activities.update(activity);
+            runInAction(() => {
+                if (activity.id) {
+                    let updatedActivity = { ...this.getActivity(activity.id), ...activity }
+                    this.activityRegistry.set(activity.id, updatedActivity as Activity);
+                    this.selectedActivity = updatedActivity as Activity;
+                }
+            })
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    deleteActivity = async (id: string) => {
+        this.loading = true;
+        try {
+            await agent.Activities.delete(id);
+            runInAction(() => {
+                //this.activities = [...this.activities.filter(a => a.id !== id)];
+                this.activityRegistry.delete(id);
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => {
+                this.loading = false;
+            })
+        }
+    }
+
+    updateAttendance = async () => {
+        const user = store.userStore.user;
+        this.loading = true;
+        try {
+            await agent.Activities.attend(this.selectedActivity!.id);
+            runInAction(() => {
+                if (this.selectedActivity?.isGoing) {
+                    this.selectedActivity.attendees =
+                        this.selectedActivity.attendees?.filter(a => a.username !== user?.username);
+                    this.selectedActivity.isGoing = false;
+                } else {
+                    const attendee = new Profile(user!);
+                    this.selectedActivity?.attendees?.push(attendee);
+                    this.selectedActivity!.isGoing = true;
+                }
+                this.activityRegistry.set(this.selectedActivity!.id, this.selectedActivity!);
+            })
+        } catch (error) {
+            console.log(error);
+        } finally {
+            runInAction(() => { this.loading = false });
+        }
+    }
+
+    cancelActivityToggle = async () => {
+        this.loading = true;
+        try {
+            await agent.Activities.attend(this.selectedActivity!.id);
+            runInAction(() => {
+                this.selectedActivity!.isCancelled = !this.selectedActivity?.isCancelled;
+                this.activityRegistry.set(this.selectedActivity!.id, this.selectedActivity!);
+            })
+        } catch (error) {
+            console.log(error);
+        } finally {
+            runInAction(() => { this.loading = false });
+        }
+    }
+
+    clearSelectedActivity = () => {
+        this.selectedActivity = undefined;
+    }
+
+    updateAttendeeFollowing = (username: string) => {
+        this.activityRegistry.forEach(activity => {
+            activity.attendees.forEach(attendee => {
+                if (attendee.username === username) {
+                    attendee.following ? attendee.followersCount-- : attendee.followersCount++;
+                    attendee.following = !attendee.following;
+                }
+            })
+        })
+    }
+}	
+```
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Photo, Profile } from "../models/profile";
+import { store } from "./store";
+
+export default class ProfileStore {
+    profile: Profile | null = null;
+    loadingProfile = false;
+    uploading = false;
+    loading = false;
+    followings: Profile[] = [];
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isCurrentUser() {
+        if (store.userStore.user && this.profile) {
+            return store.userStore.user.username === this.profile.username;
+        }
+        return false;
+    }
+
+    loadProfile = async (username: string) => {
+        this.loadingProfile = true;
+        try {
+            const profile = await agent.Profiles.get(username);
+            runInAction(() => {
+                this.profile = profile;
+                this.loadingProfile = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loadingProfile = false);
+        }
+    }
+
+    uploadPhoto = async (file: Blob) => {
+        this.uploading = true;
+        try {
+            const response = await agent.Profiles.uploadPhoto(file);
+            const photo = response.data;
+            runInAction(() => {
+                if (this.profile) {
+                    this.profile.photos?.push(photo);
+                    if (photo.isMain && store.userStore.user) {
+                        store.userStore.setImage(photo.url);
+                        this.profile.image = photo.url;
+                    }
+                }
+                this.uploading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.uploading = false);
+        }
+    }
+
+    setMainPhoto = async (photo: Photo) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.setMainPhoto(photo.id);
+            store.userStore.setImage(photo.url);
+            runInAction(() => {
+                if (this.profile && this.profile.photos) {
+                    this.profile.photos.find(p => p.isMain)!.isMain = false;
+                    this.profile.photos.find(p => p.id === photo.id)!.isMain = true;
+                    this.profile.image = photo.url;
+                }
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    // no se permite eliminar la foto principal
+    deletePhoto = async (photo: Photo) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.deletePhoto(photo.id);
+            runInAction(() => {
+                if (this.profile) {
+                    this.profile.photos = this.profile.photos!.filter(p => p.id !== photo.id);
+                }
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);           
+        }
+    }
+
+    updateProfile = async (profile: Partial<Profile>) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.updateProfile(profile);
+            runInAction(() => {
+                if (profile.displayName && profile.displayName !== store.userStore.user?.displayName) {
+                    store.userStore.setDisplayName(profile.displayName);
+                }
+                this.profile = {...this.profile, ...profile as Profile}
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    updateFollowing = async (username: string, following: boolean) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.updateFollowing(username);
+            store.activityStore.updateAttendeeFollowing(username);
+            runInAction(() => {
+                if (this.profile && this.profile.username !== store.userStore.user?.username) {
+                    following ? this.profile.followersCount++ : this.profile.followersCount--;
+                    this.profile.following = !this.profile.following;
+                }
+                this.followings.forEach(profile => {
+                    if (profile.username == username) {
+                        profile.following ? profile.followersCount-- : profile.followersCount++;
+                        profile.following = !profile.following;
+                    }
+                })
+                this.loading = false
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+}
+```
+
+En el próximo punto se va a replantear el código para crear un componente y que resulte más claro.
+
+##### 231 Hacer que el botón seguir sea un componente
+
+Tenemos el botón en `ProfileHeader` como `<Reveal />`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Button, Divider, Grid, Header, Item, Reveal, Segment, Statistic } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileHeader({ profile }: Props) {
+    return (
+        <Segment>
+            <Grid>
+                <Grid.Column width={12}>
+                    <Item.Group>
+                        <Item>
+                            <Item.Image avatar size='small' src={profile?.image || '/assets/user.png'} />
+                            <Item.Content verticalAlign='middle'>
+                                <Header as='h1' content={profile?.displayName} />
+                            </Item.Content>
+                        </Item>
+                    </Item.Group>
+                </Grid.Column>
+                <Grid.Column width={4}>
+                    <Statistic.Group widths={2}>
+                        <Statistic label='Followers' value={profile.followersCount} />
+                        <Statistic label='Following' value={profile.followingCount} />
+                    </Statistic.Group>
+                    <Divider />
+                    <Reveal animated='move'>
+                        <Reveal.Content visible style={{ width: '100%' }}>
+                            <Button fluid color='teal' content='Following' />
+                        </Reveal.Content>
+                        <Reveal.Content hidden style={{ width: '100%' }}>
+                            <Button
+                                fluid
+                                basic
+                                color={true ? 'red' : 'green'}
+                                content={true ? 'Unfollow' : 'Follow'}
+                            />
+                        </Reveal.Content>
+                    </Reveal>
+                </Grid.Column>
+            </Grid>
+        </Segment>
+    )
+})
+```
+
+También se incluirá el botón en `ProfileCard`. Se tiene que tenerlo en cuenta al diseñar el botón, puesto que se estará contenido en un enlace.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { SyntheticEvent } from 'react';
+import { Button, Reveal } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+import { useStore } from '../../app/stores/store';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function FollowButton({ profile }: Props) {
+    const {profileStore, userStore} = useStore();
+    const {updateFollowing, loading} = profileStore;
+
+    if (userStore.user?.username === profile.username) return null;
+
+    function handleFollow(e: SyntheticEvent, username: string) {
+        e.preventDefault();
+        profile.following ? updateFollowing(username, false) : updateFollowing(username, true);
+    }
+
+    return (
+        <Reveal animated='move'>
+            <Reveal.Content visible style={{ width: '100%' }}>
+                <Button
+                    fluid
+                    color='teal'
+                    content={profile.following ? 'Following' : 'Not following'} />
+            </Reveal.Content>
+            <Reveal.Content hidden style={{ width: '100%' }}>
+                <Button
+                    fluid
+                    basic
+                    color={profile.following ? 'red' : 'green'}
+                    content={profile.following ? 'Unfollow' : 'Follow'}
+                    loading={loading}
+                    onClick={(e) => handleFollow(e, profile.username)}
+                />
+            </Reveal.Content>
+        </Reveal>
+    )
+})
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import { Divider, Grid, Header, Item, Segment, Statistic } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+import FollowButton from './FollowButton';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileHeader({ profile }: Props) {
+    return (
+        <Segment>
+            <Grid>
+                <Grid.Column width={12}>
+                    <Item.Group>
+                        <Item>
+                            <Item.Image avatar size='small' src={profile?.image || '/assets/user.png'} />
+                            <Item.Content verticalAlign='middle'>
+                                <Header as='h1' content={profile?.displayName} />
+                            </Item.Content>
+                        </Item>
+                    </Item.Group>
+                </Grid.Column>
+                <Grid.Column width={4}>
+                    <Statistic.Group widths={2}>
+                        <Statistic label='Followers' value={profile.followersCount} />
+                        <Statistic label='Following' value={profile.followingCount} />
+                    </Statistic.Group>
+                    <Divider />
+                    <FollowButton profile={profile} />
+                </Grid.Column>
+            </Grid>
+        </Segment>
+    )
+})
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Card, Icon, Image } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+import FollowButton from './FollowButton';
+
+interface Props {
+    profile: Profile
+}
+
+export default observer(function ProfileCard({ profile }: Props) {
+    function truncate(text: string | undefined) {
+        if (text) {
+            return text.length > 40 ? text.substring(0, 37) + '...' : text;
+        }
+    }
+
+    return (
+        <Card as={Link} to={`/profiles/${profile.username}`}>
+            <Image src={profile.image || '/assets/user.png'} />
+            <Card.Content>
+                <Card.Header>{profile.displayName}</Card.Header>
+                <Card.Description>{truncate(profile.bio)}</Card.Description>
+            </Card.Content>
+            <Card.Content extra>
+                <Icon name='user' />
+                {profile.followersCount} followers
+            </Card.Content>
+            <FollowButton profile={profile} />
+        </Card>
+    )
+})
+```
+
+##### 232 Obtener la lista de seguidores
+
+Se añade el método `listFollowings` en `agent.ts`.
+
+```tsx
+const Profiles = {
+    get: (username: string) => requests.get<Profile>(`/profiles/${username}`),
+    uploadPhoto: (file: Blob) => {
+        let formData = new FormData();
+        formData.append('File', file);
+        return axios.post<Photo>('photos', formData, {
+            headers: {'Content-type': 'multipart/form-data'}
+        })
+    },
+    setMainPhoto: (id: string) => requests.post(`/photos/${id}/setmain`, {}),
+    deletePhoto: (id: string) => requests.del(`/photos/${id}`),
+    updateProfile: (profile: Partial<Profile>) => requests.put(`/profiles`, profile),
+    updateFollowing: (username: string) => requests.post(`/follow/${username}`, {}),
+    listFollowinigs: (username: string, predicate:string) =>
+        requests.get<Profile[]>(`/follow/${username}?predicate=${predicate}`)
+}
+```
+
+Se añade el método `loadFollowings` en `profileStore.ts`.
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Photo, Profile } from "../models/profile";
+import { store } from "./store";
+
+export default class ProfileStore {
+    profile: Profile | null = null;
+    loadingProfile = false;
+    uploading = false;
+    loading = false;
+    followings: Profile[] = [];
+    loadingFollowings = false;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isCurrentUser() {
+        if (store.userStore.user && this.profile) {
+            return store.userStore.user.username === this.profile.username;
+        }
+        return false;
+    }
+
+    loadProfile = async (username: string) => {
+        this.loadingProfile = true;
+        try {
+            const profile = await agent.Profiles.get(username);
+            runInAction(() => {
+                this.profile = profile;
+                this.loadingProfile = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loadingProfile = false);
+        }
+    }
+
+    uploadPhoto = async (file: Blob) => {
+        this.uploading = true;
+        try {
+            const response = await agent.Profiles.uploadPhoto(file);
+            const photo = response.data;
+            runInAction(() => {
+                if (this.profile) {
+                    this.profile.photos?.push(photo);
+                    if (photo.isMain && store.userStore.user) {
+                        store.userStore.setImage(photo.url);
+                        this.profile.image = photo.url;
+                    }
+                }
+                this.uploading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.uploading = false);
+        }
+    }
+
+    setMainPhoto = async (photo: Photo) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.setMainPhoto(photo.id);
+            store.userStore.setImage(photo.url);
+            runInAction(() => {
+                if (this.profile && this.profile.photos) {
+                    this.profile.photos.find(p => p.isMain)!.isMain = false;
+                    this.profile.photos.find(p => p.id === photo.id)!.isMain = true;
+                    this.profile.image = photo.url;
+                }
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    // no se permite eliminar la foto principal
+    deletePhoto = async (photo: Photo) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.deletePhoto(photo.id);
+            runInAction(() => {
+                if (this.profile) {
+                    this.profile.photos = this.profile.photos!.filter(p => p.id !== photo.id);
+                }
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);           
+        }
+    }
+
+    updateProfile = async (profile: Partial<Profile>) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.updateProfile(profile);
+            runInAction(() => {
+                if (profile.displayName && profile.displayName !== store.userStore.user?.displayName) {
+                    store.userStore.setDisplayName(profile.displayName);
+                }
+                this.profile = {...this.profile, ...profile as Profile}
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    updateFollowing = async (username: string, following: boolean) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.updateFollowing(username);
+            store.activityStore.updateAttendeeFollowing(username);
+            runInAction(() => {
+                if (this.profile && this.profile.username !== store.userStore.user?.username) {
+                    following ? this.profile.followersCount++ : this.profile.followersCount--;
+                    this.profile.following = !this.profile.following;
+                }
+                this.followings.forEach(profile => {
+                    if (profile.username == username) {
+                        profile.following ? profile.followersCount-- : profile.followersCount++;
+                        profile.following = !profile.following;
+                    }
+                })
+                this.loading = false
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    loadFollowings = async (predicate: string) => {
+        this.loadingFollowings = true;
+        try {
+            const followings = await agent.Profiles.listFollowinigs(this.profile!.username, predicate);
+            runInAction(() => {
+                this.followings = followings;
+                this.loadingFollowings = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);  
+        }
+    }
+}
+```
+
+Hay que crear un componente para mostrar la lista de seguidores.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useEffect } from 'react';
+import { Card, Grid, Header, Tab } from 'semantic-ui-react';
+import { useStore } from '../../app/stores/store';
+import ProfileCard from './ProfileCard';
+
+export default observer(function ProfileFollowings() {
+    const {profileStore} = useStore();
+    const {profile, followings, loadFollowings, loadingFollowings} = profileStore;
+
+    useEffect(() => {
+        loadFollowings('following');
+    }, [loadFollowings])
+
+    return (
+        <Tab.Pane loading={loadingFollowings}>
+            <Grid>
+                <Grid.Column width={16}>
+                    <Header floated='left' icon='user' content={`People following ${profile?.displayName}`} />
+                </Grid.Column>
+                <Grid.Column widescreen={16}>
+                    <Card.Group itemsPerRow={4}>
+                        {followings.map(profile => (
+                            <ProfileCard key={profile.username} profile={profile} />
+                        ))}
+                    </Card.Group>
+                </Grid.Column>
+            </Grid>
+        </Tab.Pane>
+    )
+})
+```
+
+Se usa el componente en `ProfileContent`. De momento las 2 listas mostrarán el mismo contenido.
+
+```tsx
+import React from 'react';
+import { Tab } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+import ProfileAbout from './ProfileAbout';
+import ProfileFollowings from './ProfileFollowings';
+import ProfilePhotos from './ProfilePhotos';
+interface Props {
+    profile: Profile
+}
+
+export default function ProfileContent({ profile }: Props) {
+    const panes = [
+        { menuItem: 'About', render: () => <Tab.Pane><ProfileAbout /></Tab.Pane> },
+        { menuItem: 'Photos', render: () => <Tab.Pane><ProfilePhotos profile={profile} /></Tab.Pane> },
+        { menuItem: 'Events', render: () => <Tab.Pane>Events content</Tab.Pane> },
+        { menuItem: 'Followers', render: () => <ProfileFollowings /> },
+        { menuItem: 'Following', render: () => <ProfileFollowings /> }
+    ];
+
+    return (
+        <Tab
+            menu={{ fluid: true, vertical: true }}
+            menuPosition='right'
+            panes={panes}
+        />
+    )
+}
+```
+
+##### 233 Usando Reactions de MobX
+
+Se añade la reacción en el almacén de perfiles.
+
+```tsx
+import { makeAutoObservable, reaction, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Photo, Profile } from "../models/profile";
+import { store } from "./store";
+
+export default class ProfileStore {
+    profile: Profile | null = null;
+    loadingProfile = false;
+    uploading = false;
+    loading = false;
+    followings: Profile[] = [];
+    loadingFollowings = false;
+    activeTab = 0;
+
+    constructor() {
+        makeAutoObservable(this);
+
+        reaction(
+            () => this.activeTab,
+            activeTab => {
+                if (activeTab === 3 || activeTab === 4) {
+                    const predicate = activeTab === 3 ? 'followers' : 'following';
+                    this.loadFollowings(predicate);
+                } else {
+                    this.followings = [];
+                }
+            }
+        )
+    }
+
+    setActiveTab = (activeTab: any) => {
+        this.activeTab = activeTab;
+    }
+
+    get isCurrentUser() {
+        if (store.userStore.user && this.profile) {
+            return store.userStore.user.username === this.profile.username;
+        }
+        return false;
+    }
+
+    loadProfile = async (username: string) => {
+        this.loadingProfile = true;
+        try {
+            const profile = await agent.Profiles.get(username);
+            runInAction(() => {
+                this.profile = profile;
+                this.loadingProfile = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loadingProfile = false);
+        }
+    }
+
+    uploadPhoto = async (file: Blob) => {
+        this.uploading = true;
+        try {
+            const response = await agent.Profiles.uploadPhoto(file);
+            const photo = response.data;
+            runInAction(() => {
+                if (this.profile) {
+                    this.profile.photos?.push(photo);
+                    if (photo.isMain && store.userStore.user) {
+                        store.userStore.setImage(photo.url);
+                        this.profile.image = photo.url;
+                    }
+                }
+                this.uploading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.uploading = false);
+        }
+    }
+
+    setMainPhoto = async (photo: Photo) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.setMainPhoto(photo.id);
+            store.userStore.setImage(photo.url);
+            runInAction(() => {
+                if (this.profile && this.profile.photos) {
+                    this.profile.photos.find(p => p.isMain)!.isMain = false;
+                    this.profile.photos.find(p => p.id === photo.id)!.isMain = true;
+                    this.profile.image = photo.url;
+                }
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    // no se permite eliminar la foto principal
+    deletePhoto = async (photo: Photo) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.deletePhoto(photo.id);
+            runInAction(() => {
+                if (this.profile) {
+                    this.profile.photos = this.profile.photos!.filter(p => p.id !== photo.id);
+                }
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);           
+        }
+    }
+
+    updateProfile = async (profile: Partial<Profile>) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.updateProfile(profile);
+            runInAction(() => {
+                if (profile.displayName && profile.displayName !== store.userStore.user?.displayName) {
+                    store.userStore.setDisplayName(profile.displayName);
+                }
+                this.profile = {...this.profile, ...profile as Profile}
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    updateFollowing = async (username: string, following: boolean) => {
+        this.loading = true;
+        try {
+            await agent.Profiles.updateFollowing(username);
+            store.activityStore.updateAttendeeFollowing(username);
+            runInAction(() => {
+                if (this.profile && this.profile.username !== store.userStore.user?.username) {
+                    following ? this.profile.followersCount++ : this.profile.followersCount--;
+                    this.profile.following = !this.profile.following;
+                }
+                this.followings.forEach(profile => {
+                    if (profile.username == username) {
+                        profile.following ? profile.followersCount-- : profile.followersCount++;
+                        profile.following = !profile.following;
+                    }
+                })
+                this.loading = false
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);
+        }
+    }
+
+    loadFollowings = async (predicate: string) => {
+        this.loadingFollowings = true;
+        try {
+            const followings = await agent.Profiles.listFollowinigs(this.profile!.username, predicate);
+            runInAction(() => {
+                this.followings = followings;
+                this.loadingFollowings = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => this.loading = false);  
+        }
+    }
+}
+```
+
+Se ajusta `ProfileContent`.
+
+```tsx
+import React from 'react';
+import { Tab } from 'semantic-ui-react';
+import { Profile } from '../../app/models/profile';
+import { useStore } from '../../app/stores/store';
+import ProfileAbout from './ProfileAbout';
+import ProfileFollowings from './ProfileFollowings';
+import ProfilePhotos from './ProfilePhotos';
+interface Props {
+    profile: Profile
+}
+
+export default function ProfileContent({ profile }: Props) {
+    const {profileStore} = useStore();
+
+    const panes = [
+        { menuItem: 'About', render: () => <Tab.Pane><ProfileAbout /></Tab.Pane> },
+        { menuItem: 'Photos', render: () => <Tab.Pane><ProfilePhotos profile={profile} /></Tab.Pane> },
+        { menuItem: 'Events', render: () => <Tab.Pane>Events content</Tab.Pane> },
+        { menuItem: 'Followers', render: () => <ProfileFollowings /> },
+        { menuItem: 'Following', render: () => <ProfileFollowings /> }
+    ];
+
+    return (
+        <Tab
+            menu={{ fluid: true, vertical: true }}
+            menuPosition='right'
+            panes={panes}
+            onTabChange={(e, data) => profileStore.setActiveTab(data.activeIndex)}
+        />
+    )
+}
+```
+
+Ya no es necesario `useEffect` en `ProfileFollowings`. Hay que poner `activeTab` a 0 después de cargar los seguidores. En `ProfilePage`. Se ajusta la cabecera en el componente `ProfileFollowings`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import { Card, Grid, Header, Tab } from 'semantic-ui-react';
+import { useStore } from '../../app/stores/store';
+import ProfileCard from './ProfileCard';
+
+export default observer(function ProfileFollowings() {
+    const {profileStore} = useStore();
+    const {profile, followings, loadingFollowings, activeTab} = profileStore;
+
+    return (
+        <Tab.Pane loading={loadingFollowings}>
+            <Grid>
+                <Grid.Column width={16}>
+                    <Header
+                        floated='left'
+                        icon='user'
+                        content={activeTab === 3 ? `People following ${profile?.displayName}` : `People ${profile?.displayName} is following`} />
+                </Grid.Column>
+                <Grid.Column widescreen={16}>
+                    <Card.Group itemsPerRow={4}>
+                        {followings.map(profile => (
+                            <ProfileCard key={profile.username} profile={profile} />
+                        ))}
+                    </Card.Group>
+                </Grid.Column>
+            </Grid>
+        </Tab.Pane>
+    )
+})
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React, { useEffect } from 'react';
+import { useParams } from 'react-router';
+import { Grid } from 'semantic-ui-react';
+import LoadingComponent from '../../app/layout/LoadingComponent';
+import { useStore } from '../../app/stores/store';
+import ProfileContent from './ProfileContent';
+import ProfileHeader from './ProfileHeader';
+
+export default observer(function ProfilePage() {
+    const { username } = useParams<{ username: string }>();
+    const { profileStore } = useStore();
+    const { loadingProfile, loadProfile, profile, setActiveTab } = profileStore;
+
+    useEffect(() => {
+        loadProfile(username);
+        return () => {
+            setActiveTab(0);
+        }
+    }, [loadProfile, username, setActiveTab])
+
+    if (loadingProfile) return <LoadingComponent content='Loading profile...' />
+
+    return (
+        <Grid>
+            <Grid.Column width={16}>
+                {profile &&
+                    <>
+                        <ProfileHeader profile={profile} />
+                        <ProfileContent profile={profile} />
+                    </>}
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+Hay un problema en la lógica de contadores que hay que corregir. No se actualizan correctamente cuando se hacen cambios de seguimiento desde las pestañas de listas de seguidores.
+
+Es necesario cambiar la lógica de `updateFollowing` en `profileStore`.
+
+```tsx
+updateFollowing = async (username: string, following: boolean) => {
+    this.loading = true;
+    try {
+        await agent.Profiles.updateFollowing(username);
+    store.activityStore.updateAttendeeFollowing(username);
+        runInAction(() => {
+            if (this.profile && this.profile.username !== store.userStore.user?.username && this.profile.username === username) {
+                following ? this.profile.followersCount++ : this.profile.followersCount--;
+                this.profile.following = !this.profile.following;
+            }
+            if (this.profile && this.profile.username === store.userStore.user?.username) {
+                following ? this.profile.followingCount++ : this.profile.followingCount--;
+            }
+            this.followings.forEach(profile => {
+                if (profile.username === username) {
+                    profile.following ? profile.followersCount-- : profile.followersCount++;
+                    profile.following = !profile.following;
+                }
+            })
+            this.loading = false
+        })
+    } catch (error) {
+        console.log(error);
+        runInAction(() => this.loading = false);
+    }
+}
+```
+
+Todavía existe un problema que no se menciona en el curso. Los cambios de seguimiento en el botón de la cabecera del perfil, no se reflejan en la lista de seguidores.
+
+Hay que hacer que `ProfileContent` sea un `observer` MobX, aunque no termina de funcionar bien.
+
