@@ -11806,5 +11806,1022 @@ updateFollowing = async (username: string, following: boolean) => {
 
 Todavía existe un problema que no se menciona en el curso. Los cambios de seguimiento en el botón de la cabecera del perfil, no se reflejan en la lista de seguidores.
 
-Hay que hacer que `ProfileContent` sea un `observer` MobX, aunque no termina de funcionar bien.
+Hay que hacer que `ProfileContent` sea un `observer` MobX, aunque **no es la solución**.
 
+##### 234 Sumario de la sección 20
+
+https://vertabelo.com para crear un modelo físico de la base de datos
+
+dotnet ef migrations script -o test.sql -p Persistence -s API
+
+#### Sección 21: Paginación, ordenación y filtrado
+
+##### 235 Introducción
+
+##### 236 Añadir una clase `PagedList`
+
+Se extiende la clase `List` del framework con características de paginación.
+
+```c#
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Core
+{
+    public class PagedList<T> : List<T>
+    {
+        public PagedList(IEnumerable<T> items, int count, int pageNumber, int pageSize)
+        {
+            CurrentPage = pageNumber;
+            TotalPages = (int)Math.Ceiling(count / (double)pageSize);
+            PageSize = pageSize;
+            TotalCount = count;
+            AddRange(items);
+        }
+
+        public int CurrentPage { get; set; }
+        public int TotalPages { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
+
+        public static async Task<PagedList<T>> CreateAsync(IQueryable<T> source, int pageNumber,
+            int pageSize)
+        {
+            var count = await source.CountAsync();
+            var items = await source.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToListAsync();
+            return new PagedList<T>(items, count, pageNumber, pageSize);
+        }
+    }
+}
+```
+
+##### 237 Añadir lógica de paginación a la capa de aplicación
+
+Se crea la clase `PagingParams`. Se usa el fragmento `propfull`, *property and backing field*, para definir el tamaño de página.
+
+```c#
+namespace Application.Core
+{
+    public class PagingParams
+    {
+        private const int MaxPageSize = 50;
+        public int PageNumber { get; set; } = 1;
+        private int _pageSize = 10;
+        public int PageSize
+        {
+            get => _pageSize;
+            set => _pageSize = (value > MaxPageSize) ? MaxPageSize : value;
+        }
+    }
+}
+```
+
+Se adapta la lista de actividades.
+
+```c#
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class List
+    {
+        public class Query : IRequest<Result<PagedList<ActivityDto>>>
+        {
+            public PagingParams Params { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<PagedList<ActivityDto>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<PagedList<ActivityDto>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var query = _context.Activities
+                    .ProjectTo<ActivityDto>(_mapper.ConfigurationProvider,
+                        new {currentUsername = _userAccessor.GetUserName()})
+                    .AsQueryable();
+
+                return Result<PagedList<ActivityDto>>.Success(
+                    await PagedList<ActivityDto>.CreateAsync(query, request.Params.PageNumber, 
+                        request.Params.PageSize)
+                );
+            }
+        }
+    }
+}
+```
+
+Se adapta el método `GetActivities` del controlador de actividades.
+
+```c#
+[HttpGet]
+public async Task<IActionResult> GetActivities([FromQuery] PagingParams param)
+{
+    return HandleResult(await Mediator.Send(new List.Query { Params = param }));
+}
+```
+
+##### 238 Añadir una cabecera de paginación
+
+Se crea una extensión de `HttpResponse`.
+
+```c#
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+
+namespace API.Extensions
+{
+    public static class HttpExtensions
+    {
+        public static void AddPaginationHeader(this HttpResponse response, int currentPage,
+            int itemsPerPage, int totalItems, int totalPages)
+        {
+            var paginationHeader = new
+            {
+                currentPage,
+                itemsPerPage,
+                totalItems,
+                totalPages
+            };
+            response.Headers.Add("Pagination", JsonSerializer.Serialize(paginationHeader));
+            response.Headers.Add("Access-Control-Expose-Headers", "Pagination");
+        }
+    }
+}
+```
+
+Se añade el método `HandlePagedResult` a `BaseApiController`.
+
+```c#
+protected ActionResult HandlePagedResult<T>(Result<PagedList<T>> result)
+{
+    if (result == null) return NotFound();
+    if (result.IsSuccess && result.Value != null)
+    {
+        Response.AddPaginationHeader(result.Value.CurrentPage, result.Value.PageSize,
+            result.Value.TotalCount, result.Value.TotalPages);
+        return Ok(result.Value);
+    }
+    if (result.IsSuccess && result.Value == null)
+        return NotFound();
+    return BadRequest(result.Error);
+}
+```
+
+Se adapta el controlador de actividades.
+
+```c#
+[HttpGet]
+public async Task<IActionResult> GetActivities([FromQuery] PagingParams param)
+{
+    return HandlePagedResult(await Mediator.Send(new List.Query { Params = param }));
+}
+```
+
+Se ordenan las actividades por fecha.
+
+```c#
+public async Task<Result<PagedList<ActivityDto>>> Handle(Query request, CancellationToken cancellationToken)
+{
+    var query = _context.Activities
+        .OrderBy(d => d.Date)
+        .ProjectTo<ActivityDto>(_mapper.ConfigurationProvider,
+            new {currentUsername = _userAccessor.GetUserName()})
+        .AsQueryable();
+
+    return Result<PagedList<ActivityDto>>.Success(
+        await PagedList<ActivityDto>.CreateAsync(query, request.Params.PageNumber, 
+            request.Params.PageSize)
+    );
+}
+```
+
+##### 239 Añadir paginación en el lado de cliente
+
+Se crean los mecanismos necesarios para gestionar la paginación, en `src/app/models/pagination.ts`.
+
+```tsx
+export interface Pagination {
+    currentPage: number;
+    itemsPerPage: number;
+    totalItems: number;
+    totalPages: number;
+}
+
+export class PaginatedResult<T> {
+    data: T;
+    pagination: Pagination;
+
+    constructor(data: T, pagination: Pagination) {
+        this.data = data;
+        this.pagination = pagination;
+    }
+}
+```
+
+Se prepara `agent.ts` para recibir el estado de la paginación en la cabecera de la respuesta, en el interceptor axios. 
+
+```tsx
+axios.interceptors.response.use(async response => {
+    await sleep(1000);
+    const pagination = response.headers['pagination'];
+    if (pagination) {
+        response.data = new PaginatedResult(response.data, JSON.parse(pagination));
+        return response as AxiosResponse<PaginatedResult<any>>
+    }
+    return response;
+}, (error: AxiosError) => {...}
+```
+
+También se actualiza la respuesta de la lista de actividades.
+
+```tsx
+list: () => requests.get<PaginatedResult<Activity[]>>('/activities'),
+```
+
+Se ajusta el almacén de actividades.
+
+```tsx
+pagination: Pagination | null = null;
+...
+
+loadActivities = async () => {
+    this.setLoadingInitial(true);
+    try {
+        const result = await agent.Activities.list();
+        result.data.forEach(activity => {
+            this.setActivity(activity);
+        })
+        this.setPagination(result.pagination);
+        this.setLoadingInitial(false);
+    } catch (error) {
+        console.log(error);
+        this.setLoadingInitial(false);
+    }
+}
+
+setPagination = (pagination: Pagination) => {
+    this.pagination = pagination;
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/239.1.png)
+
+##### 240 Añadir parámetros de paginación
+
+Se añade `PagingParams` a `pagination.ts`.
+
+```tsx
+export interface Pagination {
+    currentPage: number;
+    itemsPerPage: number;
+    totalItems: number;
+    totalPages: number;
+}
+
+export class PaginatedResult<T> {
+    data: T;
+    pagination: Pagination;
+
+    constructor(data: T, pagination: Pagination) {
+        this.data = data;
+        this.pagination = pagination;
+    }
+}
+
+export class PagingParams {
+    pageNumber = 1;
+    pageSize = 2;
+}
+```
+
+Se usa en el almacén de actividades.
+
+```tsx
+pagingParams = new PagingParams();
+...
+
+setPagingParams = (pagingParams: PagingParams) => {
+    this.pagingParams = pagingParams;
+}
+
+get axiosParams() {
+    const params = new URLSearchParams();
+    params.append('pageNumber', this.pagingParams.pageNumber.toString());
+    params.append('pageSize', this.pagingParams.pageSize.toString());
+    return params;
+}
+...
+
+loadActivities = async () => {
+    this.setLoadingInitial(true);
+    try {
+        const result = await agent.Activities.list(this.axiosParams);
+        result.data.forEach(activity => {
+            this.setActivity(activity);
+        })
+        this.setPagination(result.pagination);
+        this.setLoadingInitial(false);
+    } catch (error) {
+        console.log(error);
+        this.setLoadingInitial(false);
+    }
+}
+```
+
+También hay que ajustar `agent.ts`.
+
+```tsx
+list: (params: URLSearchParams) => axios.get<PaginatedResult<Activity[]>>('/activities', {params}).then(responseBody),
+```
+
+Ahora sólo se obtienen 2 actividades.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/240.1.png)
+
+##### 241 Añadir paginación vertical
+
+Se ajusta `PagingParams` en `pagination.ts`.
+
+```tsx
+export class PagingParams {
+    pageNumber;
+    pageSize;
+
+    constructor(pageNumber = 1, pageSize = 2) {
+        this.pageNumber = pageNumber;
+        this.pageSize = pageSize;
+    }
+}
+```
+
+La lógica de paginación se aplica a `ActivityDashboard`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import { useEffect, useState } from 'react';
+import { Button, Grid } from 'semantic-ui-react';
+import LoadingComponent from '../../../app/layout/LoadingComponent';
+import { PagingParams } from '../../../app/models/pagination';
+import { useStore } from '../../../app/stores/store';
+import ActivityFilters from './ActivityFilters';
+import ActivityList from './ActivityList';
+
+export default observer(function ActivityDashboard() {
+    const { activityStore } = useStore();
+    const { loadActivities, activityRegistry, pagination, setPagingParams } = activityStore;
+    const [loadingNext, setLoadingNext] = useState(false);
+
+    function handleGetNext() {
+        setLoadingNext(true);
+        // no puedo usar setPagingParams directamente, provoca un error... (???)
+        activityStore.setPagingParams(new PagingParams(pagination!.currentPage + 1))
+        loadActivities().then(() => setLoadingNext(false));
+    }
+
+    useEffect(() => {
+        if (activityRegistry.size <= 1) loadActivities();
+    }, [activityRegistry.size, loadActivities])
+
+    if (activityStore.loadingInitial && !loadingNext) return <LoadingComponent content='Loading activities...' />
+
+    return (
+        <Grid>
+            <Grid.Column width='10'>
+                <ActivityList />
+                <Button
+                    floated='right'
+                    content='More...'
+                    positive
+                    onClick={handleGetNext}
+                    loading={loadingNext}
+                    disabled={pagination?.totalPages === pagination?.currentPage}
+                />
+            </Grid.Column>
+            <Grid.Column width='6'>
+                <ActivityFilters />
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+##### 242 Añadir desplazamiento infinito
+
+```bash
+[joan@alkaid client-app]$ npm install react-infinite-scroller
+npm ERR! code ERESOLVE
+npm ERR! ERESOLVE unable to resolve dependency tree
+npm ERR! 
+npm ERR! While resolving: client-app@0.1.0
+npm ERR! Found: react@17.0.2
+npm ERR! node_modules/react
+npm ERR!   react@"^17.0.1" from the root project
+npm ERR! 
+npm ERR! Could not resolve dependency:
+npm ERR! peer react@"^0.14.9 || ^15.3.0 || ^16.0.0" from react-infinite-scroller@1.2.4
+npm ERR! node_modules/react-infinite-scroller
+npm ERR!   react-infinite-scroller@"*" from the root project
+npm ERR! 
+npm ERR! Fix the upstream dependency conflict, or retry
+npm ERR! this command with --force, or --legacy-peer-deps
+npm ERR! to accept an incorrect (and potentially broken) dependency resolution.
+npm ERR! 
+npm ERR! See /home/joan/.npm/eresolve-report.txt for a full report.
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     /home/joan/.npm/_logs/2021-04-21T15_55_59_749Z-debug.log
+
+[joan@alkaid client-app]$ npm install react-infinite-scroller --legacy-peer-deps
+
+added 1 package, and audited 2047 packages in 3s
+
+137 packages are looking for funding
+  run `npm fund` for details
+
+3 vulnerabilities (1 moderate, 2 high)
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+[joan@alkaid client-app]$ npm install @types/react-infinite-scroller
+added 1 package, and audited 2048 packages in 4s
+
+137 packages are looking for funding
+  run `npm fund` for details
+
+3 vulnerabilities (1 moderate, 2 high)
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+```
+
+Se elimina el botón de avance de `ActivityDashboard`, sustituyéndolo por el desplazamiento infinito cubriendo `<ActivityList />`.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import { useEffect, useState } from 'react';
+import InfiniteScroll from 'react-infinite-scroller';
+import { Button, Grid, Loader } from 'semantic-ui-react';
+import LoadingComponent from '../../../app/layout/LoadingComponent';
+import { PagingParams } from '../../../app/models/pagination';
+import { useStore } from '../../../app/stores/store';
+import ActivityFilters from './ActivityFilters';
+import ActivityList from './ActivityList';
+
+export default observer(function ActivityDashboard() {
+    const { activityStore } = useStore();
+    const { loadActivities, activityRegistry, pagination, setPagingParams } = activityStore;
+    const [loadingNext, setLoadingNext] = useState(false);
+
+    function handleGetNext() {
+        setLoadingNext(true);
+        activityStore.setPagingParams(new PagingParams(pagination!.currentPage + 1))
+        loadActivities().then(() => setLoadingNext(false));
+    }
+
+    useEffect(() => {
+        if (activityRegistry.size <= 1) loadActivities();
+    }, [activityRegistry.size, loadActivities])
+
+    if (activityStore.loadingInitial && !loadingNext) return <LoadingComponent content='Loading activities...' />
+
+    return (
+        <Grid>
+            <Grid.Column width='10'>
+                <InfiniteScroll
+                    pageStart={0}
+                    loadMore={handleGetNext}
+                    hasMore={!loadingNext && !!pagination && pagination.currentPage < pagination.totalPages}
+                    initialLoad={false}
+                >
+                    <ActivityList />
+                </InfiniteScroll>
+            </Grid.Column>
+            <Grid.Column width='6'>
+                <ActivityFilters />
+            </Grid.Column>
+            <Grid.Column width={10}>
+                <Loader active={loadingNext} />
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+##### 243 Añadir filtros en la API
+
+Se van a habilitar parámetros adicionales para obtener la lista de actividades.
+
+Se crea la clase `ActivityParams`.
+
+```c#
+using System;
+using Application.Core;
+
+namespace Application.Activities
+{
+    public class ActivityParams : PagingParams
+    {
+        public bool IsGoing { get; set; }
+        public bool IsHost { get; set; }
+        public DateTime StartDate { get; set; }        
+    }
+}
+```
+
+Se ajusta el manipulador de la lista de actividades. En lugar de pasar `PagingParams` en la consulta se envía `ActivityParams`. Se aplican los filtros.
+
+```c#
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Application.Core;
+using Application.Interfaces;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using MediatR;
+using Persistence;
+
+namespace Application.Activities
+{
+    public class List
+    {
+        public class Query : IRequest<Result<PagedList<ActivityDto>>>
+        {
+            public ActivityParams Params { get; set; }
+        }
+
+        public class Handler : IRequestHandler<Query, Result<PagedList<ActivityDto>>>
+        {
+            private readonly DataContext _context;
+            private readonly IMapper _mapper;
+            private readonly IUserAccessor _userAccessor;
+            public Handler(DataContext context, IMapper mapper, IUserAccessor userAccessor)
+            {
+                _userAccessor = userAccessor;
+                _mapper = mapper;
+                _context = context;
+            }
+
+            public async Task<Result<PagedList<ActivityDto>>> Handle(Query request, CancellationToken cancellationToken)
+            {
+                var query = _context.Activities
+                    .Where(d => d.Date >= request.Params.StartDate)
+                    .OrderBy(d => d.Date)
+                    .ProjectTo<ActivityDto>(_mapper.ConfigurationProvider,
+                        new {currentUsername = _userAccessor.GetUserName()})
+                    .AsQueryable();
+
+                if (request.Params.IsGoing && !request.Params.IsHost)
+                {
+                    query = query.Where(x => x.Attendees.Any(a => a.Username == _userAccessor.GetUserName()));
+                }
+
+                if (request.Params.IsHost && !request.Params.IsGoing)
+                {
+                    query = query.Where(x => x.HostUsername == _userAccessor.GetUserName());
+                }
+
+                return Result<PagedList<ActivityDto>>.Success(
+                    await PagedList<ActivityDto>.CreateAsync(query, request.Params.PageNumber, 
+                        request.Params.PageSize)
+                );
+            }
+        }
+    }
+}
+```
+
+Finalmente se modifica el controlador.
+
+```c#
+[HttpGet]
+public async Task<IActionResult> GetActivities([FromQuery] ActivityParams param)
+{
+    return HandlePagedResult(await Mediator.Send(new List.Query { Params = param }));
+}
+```
+
+##### 244 Filtrar en el lado de cliente
+
+En el almacén de actividades tenemos `axiosParams` que va a resultar útil.
+
+
+
+```tsx
+import { makeAutoObservable, reaction, runInAction } from "mobx";
+import agent from "../api/agent";
+import { Activity, ActivityFormValues } from "../models/activity";
+import { format } from 'date-fns';
+import { store } from "./store";
+import { Profile } from "../models/profile";
+import { Pagination, PagingParams } from "../models/pagination";
+
+export default class ActivityStore {
+    activityRegistry = new Map<string, Activity>();
+    selectedActivity: Activity | undefined = undefined;
+    editMode = false;
+    loading = false;
+    loadingInitial = false;
+    pagination: Pagination | null = null;
+    pagingParams = new PagingParams();
+    predicate = new Map().set('all', true);
+
+    constructor() {
+        makeAutoObservable(this);
+
+        reaction(
+            () => this.predicate.keys(),
+            () => {
+                this.pagingParams = new PagingParams();
+                this.activityRegistry.clear();
+                this.loadActivities();
+            }
+        )
+    }
+
+    setPagingParams = (pagingParams: PagingParams) => {
+        this.pagingParams = pagingParams;
+    }
+
+    setPredicate =(predicate: string, value: string | Date) => {
+        const resetPredicate = () => {
+            this.predicate.forEach((value, key) => {
+                if (key !== 'startDate') this.predicate.delete(key);
+            })
+        }
+        switch (predicate) {
+            case 'all':
+                resetPredicate();
+                this.predicate.set('all', true);
+                break;
+            case 'isGoing':
+                resetPredicate();
+                this.predicate.set('isGoing', true);
+                break;
+            case 'isHost':
+                resetPredicate();
+                this.predicate.set('isHost', true);
+                break;
+            case 'startDate':
+                this.predicate.delete('startDate');
+                this.predicate.set('startDate', value);
+        }
+    }
+
+    get axiosParams() {
+        const params = new URLSearchParams();
+        params.append('pageNumber', this.pagingParams.pageNumber.toString());
+        params.append('pageSize', this.pagingParams.pageSize.toString());
+        this.predicate.forEach((value, key) => {
+            if (key === 'startDate') {
+                params.append(key, (value as Date).toISOString());
+            } else {
+                params.append(key, value);
+            }
+        })
+        return params;
+    }
+
+    get activitiesByDate() {
+        return Array.from(this.activityRegistry.values()).sort((a, b) =>
+            a.date!.getTime() - b.date!.getTime());
+    }
+
+    get groupedActivities() {
+        return Object.entries(
+            this.activitiesByDate.reduce((activities, activity) => {
+                const date = format(activity.date!, 'dd MMM yyyy');
+                activities[date] = activities[date] ? [...activities[date], activity] : [activity];
+                return activities;
+            }, {} as { [key: string]: Activity[] })
+        )
+    }
+
+    loadActivities = async () => {
+        this.setLoadingInitial(true);
+        try {
+            const result = await agent.Activities.list(this.axiosParams);
+            result.data.forEach(activity => {
+                this.setActivity(activity);
+            })
+            this.setPagination(result.pagination);
+            this.setLoadingInitial(false);
+        } catch (error) {
+            console.log(error);
+            this.setLoadingInitial(false);
+        }
+    }
+
+    setPagination = (pagination: Pagination) => {
+        this.pagination = pagination;
+    }
+
+    loadActivity = async (id: string) => {
+        let activity = this.getActivity(id);
+        if (activity) {
+            this.selectedActivity = activity;
+            return activity;
+        } else {
+            this.setLoadingInitial(true);
+            try {
+                activity = await agent.Activities.details(id);
+                this.setActivity(activity);
+                runInAction(() => {
+                    this.selectedActivity = activity;
+                })
+                this.setLoadingInitial(false);
+                return activity;
+            } catch (error) {
+                console.log(error);
+                this.setLoadingInitial(false);
+            }
+        }
+    }
+
+    private setActivity = (activity: Activity) => {
+        const user = store.userStore.user; // se obtiene el usuario
+        if (user) {
+            activity.isGoing = activity.attendees?.some(
+                a => a.username === user.username
+            )
+            activity.isHost = activity.hostUsername === user.username;
+            activity.host = activity.attendees?.find(x => x.username === activity.hostUsername);
+        }
+        activity.date = new Date(activity.date!);
+        this.activityRegistry.set(activity.id, activity);
+    }
+
+    private getActivity = (id: string) => {
+        return this.activityRegistry.get(id);
+    }
+
+    setLoadingInitial = (state: boolean) => {
+        this.loadingInitial = state;
+    }
+
+    createActivity = async (activity: ActivityFormValues) => {
+        const user = store.userStore.user;
+        const attendee = new Profile(user!);
+        try {
+            await agent.Activities.create(activity);
+            const newActivity = new Activity(activity);
+            newActivity.hostUsername = user!.username;
+            newActivity.attendees = [attendee];
+            this.setActivity(newActivity);
+            runInAction(() => {
+                this.selectedActivity = newActivity;
+            })
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    updateActivity = async (activity: ActivityFormValues) => {
+        try {
+            await agent.Activities.update(activity);
+            runInAction(() => {
+                if (activity.id) {
+                    let updatedActivity = { ...this.getActivity(activity.id), ...activity }
+                    this.activityRegistry.set(activity.id, updatedActivity as Activity);
+                    this.selectedActivity = updatedActivity as Activity;
+                }
+            })
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    deleteActivity = async (id: string) => {
+        this.loading = true;
+        try {
+            await agent.Activities.delete(id);
+            runInAction(() => {
+                this.activityRegistry.delete(id);
+                this.loading = false;
+            })
+        } catch (error) {
+            console.log(error);
+            runInAction(() => {
+                this.loading = false;
+            })
+        }
+    }
+
+    updateAttendance = async () => {
+        const user = store.userStore.user;
+        this.loading = true;
+        try {
+            await agent.Activities.attend(this.selectedActivity!.id);
+            runInAction(() => {
+                if (this.selectedActivity?.isGoing) {
+                    this.selectedActivity.attendees =
+                        this.selectedActivity.attendees?.filter(a => a.username !== user?.username);
+                    this.selectedActivity.isGoing = false;
+                } else {
+                    const attendee = new Profile(user!);
+                    this.selectedActivity?.attendees?.push(attendee);
+                    this.selectedActivity!.isGoing = true;
+                }
+                this.activityRegistry.set(this.selectedActivity!.id, this.selectedActivity!);
+            })
+        } catch (error) {
+            console.log(error);
+        } finally {
+            runInAction(() => { this.loading = false });
+        }
+    }
+
+    cancelActivityToggle = async () => {
+        this.loading = true;
+        try {
+            await agent.Activities.attend(this.selectedActivity!.id);
+            runInAction(() => {
+                this.selectedActivity!.isCancelled = !this.selectedActivity?.isCancelled;
+                this.activityRegistry.set(this.selectedActivity!.id, this.selectedActivity!);
+            })
+        } catch (error) {
+            console.log(error);
+        } finally {
+            runInAction(() => { this.loading = false });
+        }
+    }
+
+    clearSelectedActivity = () => {
+        this.selectedActivity = undefined;
+    }
+
+    updateAttendeeFollowing = (username: string) => {
+        this.activityRegistry.forEach(activity => {
+            activity.attendees.forEach(attendee => {
+                if (attendee.username === username) {
+                    attendee.following ? attendee.followersCount-- : attendee.followersCount++;
+                    attendee.following = !attendee.following;
+                }
+            })
+        })
+    }
+}
+```
+
+##### 245 Actualizar el componente de filtros
+
+Para darle funcionalidad.
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import Calendar from 'react-calendar';
+import { Header, Menu } from 'semantic-ui-react';
+import { useStore } from '../../../app/stores/store';
+
+export default observer(function ActivityFilters() {
+    const {activityStore: {predicate, setPredicate}} = useStore();
+
+    return (
+        <>
+            <Menu vertical size='large' style={{ width: '100%', marginTop: '27px' }}>
+                <Header icon='filter' attached color='teal' content='Filters' />
+                <Menu.Item
+                    content='All activities'
+                    active={predicate.has('all')}
+                    onClick={() => setPredicate('all', 'true')}
+                />
+                <Menu.Item
+                    content="I'm going"
+                    active={predicate.has('isGoing')}
+                    onClick={() => setPredicate('isGoing', 'true')}
+                />
+                <Menu.Item
+                    content="I'm hosting"
+                    active={predicate.has('isHost')}
+                    onClick={() => setPredicate('isHots', 'true')}
+                />
+            </Menu>
+            <Header />
+            <Calendar
+                onChange={(date) => setPredicate('startDate', date as Date)}
+                value={predicate.get('startDate') || new Date()}
+            />
+        </>
+    )
+})
+```
+
+##### 246 Añadir marcadores de posición
+
+Para evitar que se recargue la página al aplicar un filtro.
+
+Se crea el componente `ActivityListItemPlaceholder` a partir de un `snippet`.
+
+Se sustituye la carga completa de página en `ActivityDashboard`.
+
+```tsx
+if (activityStore.loadingInitial && !loadingNext) return <LoadingComponent content='Loading activities...' />
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import { useEffect, useState } from 'react';
+import InfiniteScroll from 'react-infinite-scroller';
+import { Grid, Loader } from 'semantic-ui-react';
+import { PagingParams } from '../../../app/models/pagination';
+import { useStore } from '../../../app/stores/store';
+import ActivityFilters from './ActivityFilters';
+import ActivityList from './ActivityList';
+import ActivityListItemPlaceholder from './ActivityListItemPlaceholder';
+
+export default observer(function ActivityDashboard() {
+    const { activityStore } = useStore();
+    const { loadActivities, activityRegistry, pagination, setPagingParams } = activityStore;
+    const [loadingNext, setLoadingNext] = useState(false);
+
+    function handleGetNext() {
+        setLoadingNext(true);
+        setPagingParams(new PagingParams(pagination!.currentPage + 1))
+        loadActivities().then(() => setLoadingNext(false));
+    }
+
+    useEffect(() => {
+        if (activityRegistry.size <= 1) loadActivities();
+    }, [activityRegistry.size, loadActivities])
+
+    return (
+        <Grid>
+            <Grid.Column width='10'>
+                {activityStore.loadingInitial && !loadingNext ? (
+                    <>
+                        <ActivityListItemPlaceholder />
+                        <ActivityListItemPlaceholder />
+                    </>
+                ) : (
+                    <InfiniteScroll
+                        pageStart={0}
+                        loadMore={handleGetNext}
+                        hasMore={!loadingNext && !!pagination && pagination.currentPage < pagination.totalPages}
+                        initialLoad={false}
+                    >
+                        <ActivityList />
+                    </InfiniteScroll>
+                )}
+            </Grid.Column>
+            <Grid.Column width='6'>
+                <ActivityFilters />
+            </Grid.Column>
+            <Grid.Column width={10}>
+                <Loader active={loadingNext} />
+            </Grid.Column>
+        </Grid>
+    )
+})
+```
+
+##### 247 Añadir un componente de actividades en el perfil de usuario + reto
+
+Se va a usar un procedimiento algo diferente al usado hasta ahora.
+
+Se crea la clase `UserActivityDto`. Se usa una propiedad de ayuda `HostUsername`, que no se va a transferir al cliente.
+
+```c#
+using System;
+using System.Text.Json.Serialization;
+
+namespace Application.Profiles
+{
+    public class UserActivityDto
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; }
+        public string Category { get; set; }
+        public DateTime Date { get; set; }
+
+        [JsonIgnore]
+        public string HostUsername { get; set; }
+    }
+}
+```
+
+###### Reto
