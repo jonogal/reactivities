@@ -12825,3 +12825,28 @@ namespace Application.Profiles
 ```
 
 ###### Reto
+
+##### 248 Solución del reto
+
+##### 249 Sumario de la sección 21
+
+#### Sección 22: Retoques finales y publicar
+
+##### 250 Introducción
+
+- ScrollToTop
+
+- Protección de la ruta del lado de cliente
+
+- Construir la aplicación react para producción
+
+- Cambiar a una base de datos de "producción"
+
+- Publicar en Heroku
+
+##### 251 Añadir desplazamiento hacia el tope superior para nuestras rutas
+
+Desplazar a la parte superior de la página es una característica de `react router`.
+
+https://reactrouter.com/web/guides/scroll-restoration
+
