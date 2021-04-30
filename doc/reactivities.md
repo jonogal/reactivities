@@ -12834,7 +12834,7 @@ namespace Application.Profiles
 
 ##### 250 Introducción
 
-- ScrollToTop
+- Desplazamiento a la parte superior
 
 - Protección de la ruta del lado de cliente
 
@@ -12850,3 +12850,452 @@ Desplazar a la parte superior de la página es una característica de `react rou
 
 https://reactrouter.com/web/guides/scroll-restoration
 
+Se crea el componente `ScrollToTop`, copiado de la página web de `react router`.
+
+```tsx
+import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
+
+export default function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
+  return null;
+}
+```
+
+Se usa en `index.tsx`.
+
+```tsx
+ReactDOM.render(
+  <StoreContext.Provider value={store}>
+    <Router history={history}>
+      <ScrollToTop />
+      <App />
+    </Router>
+  </StoreContext.Provider>,
+  document.getElementById('root')
+);
+```
+
+##### 252 Añadir rutas privadas
+
+Se trata de añadir protección en el cliente para evitar que se puedan usar rutas cuando el usuario está desconectado.
+
+Se crea un nuevo componente `PrivateRoute.tsx`.
+
+```tsx
+import { Redirect, Route, RouteComponentProps, RouteProps } from "react-router";
+import { useStore } from "../stores/store";
+
+interface Props extends RouteProps {
+    component: React.ComponentType<RouteComponentProps<any>> | React.ComponentType<any>;
+}
+
+export default function PrivateRoute({component: Component, ...rest}: Props) {
+    const {userStore: {isLoggedIn}} = useStore();
+    return (
+        <Route
+            {...rest}
+            render={(props) => isLoggedIn ? <Component {...props} /> : <Redirect to='/' />}
+        />
+    )
+} 
+```
+
+Se usa en `App.tsx`.
+
+```tsx
+import React, { useEffect } from 'react';
+import { Container } from 'semantic-ui-react';
+import NavBar from './NavBar';
+import ActivityDashboard from '../../features/activities/dashboard/ActivityDashboard';
+import { observer } from 'mobx-react-lite';
+import { Route, Switch, useLocation } from 'react-router';
+import HomePage from '../../features/home/HomePage';
+import ActivityForm from '../../features/activities/form/ActivityForm';
+import ActivityDetails from '../../features/activities/details/ActivityDetails';
+import TestErrors from '../../features/errors/TestError';
+import { ToastContainer } from 'react-toastify';
+import NotFound from '../../features/errors/NotFound';
+import ServerError from '../../features/errors/ServerError';
+import { useStore } from '../stores/store';
+import LoadingComponent from './LoadingComponent';
+import ModalContainer from '../common/modals/ModalContainer';
+import ProfilePage from '../../features/profiles/ProfilePage';
+import PrivateRoute from './PrivateRoute';
+
+function App() {
+  const location = useLocation();
+  const { commonStore, userStore } = useStore();
+
+  useEffect(() => {
+    if (commonStore.token) {
+      userStore.getUser().finally(() => commonStore.setAppLoaded());
+    } else {
+      commonStore.setAppLoaded();
+    }
+  }, [commonStore, userStore])
+
+  if (!commonStore.appLoaded) return <LoadingComponent content='Loading app...' />
+
+  // </> equival a emprar <Fragment/>
+  return (
+    <>
+      <ToastContainer position='bottom-right' hideProgressBar />
+      <ModalContainer />
+
+      <Route exact path='/' component={HomePage} />
+      <Route
+        path={'/(.+)'}
+        render={() => (
+          <>
+            <NavBar />
+            <Container style={{ marginTop: '7em' }}>
+              <Switch>
+                <PrivateRoute exact path='/activities' component={ActivityDashboard} />
+                <PrivateRoute path='/activities/:id' component={ActivityDetails} />
+                <PrivateRoute key={location.key} path={['/createActivity', '/manage/:id']} component={ActivityForm} />
+                <PrivateRoute path='/profiles/:username' component={ProfilePage} />
+                <PrivateRoute path='/errors' component={TestErrors} />
+                <Route path='/server-error' component={ServerError} />
+                <Route component={NotFound} />
+              </Switch>
+            </Container>
+          </>
+        )}
+      />
+    </>
+  );
+}
+
+export default observer(App);
+```
+
+##### 253 Preparar la aplicación cliente para producción
+
+![localhost en carpeta src](/home/joan/e-learning/udemy/reactivities/doc/images/253.1.png)
+
+https://create-react-app.dev/docs/adding-custom-environment-variables/
+
+Se crean 2 archivos `.env`, uno para desarrollo y otro para producción
+
+`.env.development`
+
+```
+REACT_APP_API_URL=http://localhost:5000/api
+REACT_APP_CHAT_URL=http://localhost:5000/chat
+```
+
+```tsx
+axios.defaults.baseURL = 'http://localhost:5000/api';
+
+axios.defaults.baseURL = process.env.REACT_APP_API_URL;
+if (process.env.NODE_ENV === 'development') await sleep(1000);
+```
+
+```tsx
+this.hubConnection = new HubConnectionBuilder()
+    .withUrl('http://localhost:5000/chat?activityId=' + activityId, {
+        accessTokenFactory: () => store.userStore.user?.token!
+    })
+    .withAutomaticReconnect()
+    .configureLogging(LogLevel.Information)
+    .build();
+
+this.hubConnection = new HubConnectionBuilder()
+    .withUrl(process.env.REACT_APP_CHAT_URL + '?activityId=' + activityId, {
+        accessTokenFactory: () => store.userStore.user?.token!
+    })
+    .withAutomaticReconnect()
+    .configureLogging(LogLevel.Information)
+    .build();
+```
+
+##### 254 Construir la aplicación para producción
+
+https://create-react-app.dev/docs/available-scripts/#npm-run-build
+
+```bash
+[joan@alkaid client-app]$ npm run build
+
+> client-app@0.1.0 build
+> react-scripts build
+
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  254.25 KB  build/static/js/2.f3dbfefa.chunk.js
+  100.2 KB   build/static/css/2.07b045a9.chunk.css
+  11.64 KB   build/static/js/main.cf5de693.chunk.js
+  1.6 KB     build/static/js/3.d242d979.chunk.js
+  1.17 KB    build/static/js/runtime-main.10107bb6.js
+  373 B      build/static/css/main.b8eff46c.chunk.css
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+```
+
+Toda la estructura creada en la carpeta `build` se va a mover a `API`. Para ello se define un nuevo  `script` postbuild en `package.json`.
+
+```json
+"scripts": {
+  "start": "react-scripts start",
+  "build": "react-scripts build",
+  "postbuild": "mv build ../API/wwwroot",
+  "test": "react-scripts test",
+  "eject": "react-scripts eject"
+},
+```
+
+```bash
+[joan@alkaid client-app]$ npm run build
+
+> client-app@0.1.0 build
+> react-scripts build
+
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  254.25 KB  build/static/js/2.f3dbfefa.chunk.js
+  100.2 KB   build/static/css/2.07b045a9.chunk.css
+  11.64 KB   build/static/js/main.cf5de693.chunk.js
+  1.6 KB     build/static/js/3.d242d979.chunk.js
+  1.17 KB    build/static/js/runtime-main.10107bb6.js
+  373 B      build/static/css/main.b8eff46c.chunk.css
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+
+> client-app@0.1.0 postbuild
+> mv build ../API/wwwroot
+```
+
+##### 255 Ejecutar la aplicación cliente en el servidor dotnet Krestel
+
+Se modifica `Startup`.
+
+```c#
+app.UseRouting();
+
+app.UseDefaultFiles(); // Enables default file mapping on the current path
+app.UseStaticFiles();  // Enables static file serving for the current requested path
+
+app.UseCors("CorsPolicy");
+...
+app.UseEndpoints(endpoints =>
+{
+    endpoints.MapControllers();
+    endpoints.MapHub<ChatHub>("/chat");
+    endpoints.MapFallbackToController("Index", "Fallback"); // <-- revisar
+});
+```
+
+Se crea el controlador `Fallback`.
+
+```c#
+using System.IO;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers
+{
+    [AllowAnonymous]
+    public class FallbackController : Controller
+    {
+        public IActionResult Index()
+        {
+            return PhysicalFile(Path.Combine(Directory.GetCurrentDirectory(),
+                "wwwwroot", "index.html"), "text/HTML");
+        }
+    }
+}
+```
+
+Ahora se puede probar la página en modo producción sobre la `URL` 
+
+http://localhost:5000
+
+##### 256 Añadir PostGreSQL
+
+Se va a usar `docker` para instalar la base de datos.
+
+https://docs.docker.com/engine/install/fedora/
+
+https://www.javiergarzas.com/2015/07/que-es-docker-sencillo.html
+
+> ```bash
+> [joan@alkaid reactivities]$ sudo systemctl start docker
+> [joan@alkaid reactivities]$ docker run --name dev -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=secret -p 5432:5432 -d postgres:latest
+> Unable to find image 'postgres:latest' locally
+> latest: Pulling from library/postgres
+> f7ec5a41d630: Pull complete 
+> d073cd070242: Pull complete 
+> 03790957a916: Pull complete 
+> b3776ac15dab: Pull complete 
+> 7144fd00aec4: Pull complete 
+> 54f6491bd120: Pull complete 
+> 247ab23c6036: Pull complete 
+> 57800498c536: Pull complete 
+> bcb15a4d14f4: Pull complete 
+> cfc751ecbc6e: Pull complete 
+> bbf042afd4a4: Pull complete 
+> 453056a20de6: Pull complete 
+> d5b1a75378ef: Pull complete 
+> 7841e2074775: Pull complete 
+> Digest: sha256:61d5d8ef6cb4e2035f053f26b6b455c201a809354084cc8426b6904b8dd35602
+> Status: Downloaded newer image for postgres:latest
+> fa3a00835fa72acf45dfcf2fb105fbe4e2452ac2780ecab58f8969d44036cdcb
+> 
+> [joan@alkaid reactivities]$ docker container ls
+> CONTAINER ID   IMAGE             COMMAND                  CREATED         STATUS         PORTS                    NAMES
+> fa3a00835fa7   postgres:latest   "docker-entrypoint.s…"   8 minutes ago   Up 8 minutes   0.0.0.0:5432->5432/tcp   dev
+> ```
+>
+
+##### 257 Cambiar a PostGreSQL
+
+https://docs.microsoft.com/en-us/ef/core/providers/?tabs=dotnet-core-cli
+
+Se instala `Npgsql.EntityFrameworkCore.PostgreSQL` en el proyecto `Persistence`.
+
+En `ApplicationServicesExtensions`:
+
+```
+services.AddDbContext<DataContext>(opt =>
+{
+    opt.UseNpgsql(config.GetConnectionString("DefaultConnection"));
+});
+```
+
+En `appsettings.Development.json` cambiamos la cadena de conexión:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Information",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost; Port=5432; User Id=admin; Password=secret; Database=reactivities"
+  },
+  "TokenKey": "super secret key"
+}
+```
+
+Se borran todas las migraciones, la carpeta completa.
+
+Se crea una migración con el nuevo proveedor.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations add PGInitial -p Persistence -s API
+Build started...
+Build succeeded.
+The Entity Framework tools version '5.0.4' is older than that of the runtime '5.0.5'. Update the tools for the latest features and bug fixes.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.5 initialized 'DataContext' using provider 'Npgsql.EntityFrameworkCore.PostgreSQL' with options: None
+Done. To undo this action, use 'ef migrations remove'
+
+[joan@alkaid reactivities]$ dotnet tool update -g dotnet-ef
+Tool 'dotnet-ef' was successfully updated from version '5.0.4' to version '5.0.5'.
+
+[joan@alkaid reactivities]$ cd API/
+[joan@alkaid API]$ dotnet watch run
+watch : Started
+Building...
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.5 initialized 'DataContext' using provider 'Npgsql.EntityFrameworkCore.PostgreSQL' with options: None
+fail: Microsoft.EntityFrameworkCore.Database.Connection[20004]
+      An error occurred using the connection to database 'reactivities' on server 'tcp://localhost:5432'.
+fail: Microsoft.EntityFrameworkCore.Database.Connection[20004]
+      An error occurred using the connection to database 'reactivities' on server 'tcp://localhost:5432'.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (125ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      CREATE DATABASE reactivities;
+      ...
+```
+
+Se instala la extensión `ckolkman.vscode-postgres`, PostgreSQL Management Tool.
+
+Se comprueba que la aplicación funciona correctamente y se corrigen los errores (si se encuentran) antes de subir a producción.
+
+##### 258 Configurar Heroku
+
+Hay que crear una cuenta en heroku.com y crear una aplicación, `reactividades`.
+
+Se instala el CLI.
+
+```
+[joan@alkaid reactivities]$ sudo snap install --classic heroku
+[sudo] contrasenya per a joan: 
+heroku v7.52.0 from Heroku✓ installed
+
+[joan@alkaid reactivities]$ heroku login
+ ›   Warning: Our terms of service have changed: 
+ ›   https://dashboard.heroku.com/terms-of-service
+heroku: Press any key to open up the browser to login or q to exit: 
+Opening browser to https://cli-auth.heroku.com/auth/cli/browser/02be1e4c-0549-4eaa-870e-901d6e66277a?requestor=SFMyNTY.g2gDbQAAAA03Ny4yMjcuNzMuMTI2bgYAGL75I3kBYgABUYA.Mz_JFuzWS_5obaHpcIg4lNRWjmuw4kScKP_da_7Wgx4
+Logging in... done
+Logged in as jn.noguera@gmail.com
+
+[joan@alkaid reactivities]$ heroku git:remote -a reactividades
+ ›   Warning: heroku update available from 7.52.0 to 7.53.0.
+set git remote heroku to https://git.heroku.com/reactividades.git
+```
+
+En reactividades.Resources.Add-ons se añade Heroku Postgres.
+
+La configuración de la aplicación se realiza en reactividades.Settings.ConfigVars. Para TokenKey se usa un generador de claves, https://passwordsgenerator.net/ (32 sin símbolos): CS9KVZWdC38GeNeC9W9zvbkEjs4DQR8k.
+
+Se añade un `buildpack`, https://github.com/jincod/dotnetcore-buildpack
+
+```bash
+[joan@alkaid reactivities]$ heroku buildpacks:set https://github.com/jincod/dotnetcore-buildpack
+ ›   Warning: heroku update available from 7.52.0 to 7.53.0.
+Buildpack set. Next release on reactividades will use https://github.com/jincod/dotnetcore-buildpack.
+Run git push heroku main to create a new release using this buildpack.
+```
+
+##### 259 Desplegar la aplicación en Heroku
+
+La configuración de la base de datos en Heroku va cambiando, será necesario sustituir
+
+```c#
+services.AddDbContext<DataContext>(opt =>
+{
+    opt.UseNpgsql(config.GetConnectionString("DefaultConnection"));
+});
+```
+
+en `ApplicationServicesExtensions`.

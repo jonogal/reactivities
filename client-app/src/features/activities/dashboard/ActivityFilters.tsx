@@ -23,7 +23,7 @@ export default observer(function ActivityFilters() {
                 <Menu.Item
                     content="I'm hosting"
                     active={predicate.has('isHost')}
-                    onClick={() => setPredicate('isHots', 'true')}
+                    onClick={() => setPredicate('isHost', 'true')}
                 />
             </Menu>
             <Header />
