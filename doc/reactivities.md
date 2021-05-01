@@ -13402,3 +13402,117 @@ Ahora simplemente no carga el script y la página no funciona.
 
 > Content Security Policy: Els paràmetres de la pàgina han blocat la càrrega d'un recurs a inline («script-src»).
 
+Se aplica:
+
+```c#
+.ScriptSources(s => s.Self().UnsafeInline())
+```
+
+En la cabecera de las respuestas ahora se incluye:
+
+```
+Content-Security-Policy: script-src 'self' 'unsafe-inline';style-src 'self' https://fonts.googleapis.com;img-src 'self' https://res.cloudinary.com;font-src 'self' https://fonts.gstatic.com data:;form-action 'self';frame-ancestors 'self';block-all-mixed-content
+```
+
+Se añade `HSTS` *HTTP Strict Transport Security* a la ejecución en producción:
+
+```c#
+if (env.IsDevelopment())
+{
+    //app.UseDeveloperExceptionPage();
+    app.UseSwagger();
+    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "API v1"));
+}
+else
+{
+    app.UseHsts(); // No funciona en Heroku!
+}
+```
+
+Se añaden las cabeceras manualmente.
+
+```c#
+if (env.IsDevelopment())
+{
+    //app.UseDeveloperExceptionPage();
+    app.UseSwagger();
+    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "API v1"));
+}
+else
+{
+    app.Use(async (context, next) =>
+    {
+        context.Response.Headers.Add("Strict-Transport-Security", "max-age=31536000");
+        await next.Invoke();
+    });
+}
+```
+
+Se despliega de nuevo la aplicación en Heroku.
+
+```bash
+[joan@alkaid API]$ cd ..
+[joan@alkaid reactivities]$ git add .
+[joan@alkaid reactivities]$ git commit -m "Security headers added"
+[main b4625f7] Security headers added
+ 4 files changed, 127 insertions(+), 1 deletion(-)
+ create mode 100644 doc/images/260.1.png
+[joan@alkaid reactivities]$ git push heroku main
+...
+remote:        Released v15
+remote:        https://reactividades.herokuapp.com/ deployed to Heroku
+remote: 
+remote: Verifying deploy... done.
+To https://git.heroku.com/reactividades.git
+   ba6f67f..b4625f7  main -> main
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/261.1.png)
+
+##### 262 Sumario de final de curso
+
+#### Sección 23: Bono - Recetario de Identidad
+
+##### 263 Introducción
+
+* Facebook login
+* Refresh Tokens
+* Email confirmation
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/263.1.png)
+
+##### 264 Configurar el login en Facebook
+
+https://developers.facebook.com/apps/
+
+Se crea una nueva aplicación relacionada con **Facebook login**: **Consumer**.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/264.1.png)
+
+Una vez creada se accede a la configuración `Settings` > `Basic`.
+
+App ID | App Secret
+--- | ---
+934424187354279|50bf064d7ddcbbe8b4c675dfce2fe5d0
+
+`Roles` > `Test Users`
+
+Name | User ID | Email
+--- | --- | ---
+Barbara Test | 100067315538870 | barbara_abbsvzr_test@tfbnw.net
+Will Test | 100066921176826 | will_znusfne_test@tfbnw.net
+
+`Facebook Login` > `Settings`
+
+No se cambia ningún parámetro. Resalta `Enforce HTTPS`.
+
+##### 265 Conectando Heroku a GitHub.
+
+`Deploy` > `Deployment method`: `GitHub`.
+
+Se conecta con el repositorio `reactivities`.
+
+Se define el despliegue automático al proteger la rama `main`.
+
+##### 266 Añadir el SDK de Facebook JS
+
