@@ -13298,4 +13298,107 @@ services.AddDbContext<DataContext>(opt =>
 });
 ```
 
-en `ApplicationServicesExtensions`.
+en `ApplicationServicesExtensions`. Se usa el código de un `snippet`.
+
+Se protegen los cambios.
+
+```bash
+[joan@alkaid reactivities]$ git add .
+[joan@alkaid reactivities]$ git commit -m "Heroku deploy"
+[main d6256ae] Heroku deploy
+ 81 files changed, 4513 insertions(+), 2481 deletions(-)
+ ...
+ [joan@alkaid reactivities]$ git push heroku main
+```
+
+https://reactividades.herokuapp.com/
+
+##### 260 Ajuste de seguridad
+
+https://securityheaders.com/
+
+> Ouch, you should work on your security posture immediately: 
+
+Se instala el paquete **NWebsec.AspNetCore.Middleware** by André N. Klingsheim en el proyecto API.
+
+Se incluyen las políticas de seguridad en `Startup`:
+
+```c#
+public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+{
+    app.UseMiddleware<ExceptionMiddleware>();
+
+    app.UseXContentTypeOptions();
+    app.UseReferrerPolicy(opt => opt.NoReferrer());
+    app.UseXXssProtection(opt => opt.EnabledWithBlockMode());
+    app.UseXfo(opt => opt.Deny());
+    app.UseCspReportOnly(opt => opt
+        .BlockAllMixedContent()
+        .StyleSources(s => s.Self())
+        .FontSources(s => s.Self())
+        .FormActions(s => s.Self())
+        .FrameAncestors(s => s.Self())
+        .ImageSources(s => s.Self())
+        .ScriptSources(s => s.Self())
+    );
+	...
+```
+
+```bash
+[joan@alkaid reactivities]$ sudo systemctl start docker
+[joan@alkaid reactivities]$ docker ps -a
+CONTAINER ID   IMAGE             COMMAND                  CREATED        STATUS                    PORTS     NAMES
+a171eca4cf87   postgres:latest   "docker-entrypoint.s…"   19 hours ago   Exited (0) 11 hours ago             dev
+c5678bff9b16   hello-world       "/hello"                 40 hours ago   Exited (0) 40 hours ago             awesome_lamport
+[joan@alkaid reactivities]$ docker container restart dev
+dev
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/260.1.png)
+
+##### 261 Políticas de seguridad de Contenido
+
+Si en lugar de usar `UseCspReportOnly` se usa `UseCsp` desaparecen muchos errores de la consola, pero se trata de mantener la primera opción.
+
+Primer error:
+
+> Content Security Policy: Els paràmetres de la pàgina han implicat la càrrega d'un recurs a https://fonts.googleapis.com/css?family=Lato:400,700,400italic,700italic&subset=latin («style-src»). S'ha enviat un informe CSP.
+
+```c#
+.StyleSources(s => s.Self().CustomSources("https://fonts.googleapis.com"))
+```
+
+Segundo error:
+
+> Content Security Policy: Els paràmetres de la pàgina han implicat la càrrega d'un recurs a https://res.cloudinary.com/alkaidpmi/image/upload/v1619803842/kfdjegreqmxtxngcfplv.png («img-src»). S'ha enviat un informe CSP.
+
+```c#
+.ImageSources(s => s.Self().CustomSources("https://res.cloudinary.com"))
+```
+
+Tercer error:
+
+> Content Security Policy: Els paràmetres de la pàgina han implicat la càrrega d'un recurs a https://fonts.gstatic.com/s/lato/v17/S6u9w4BMUTPHh6UVSwiPGQ.woff2 («font-src»). S'ha enviat un informe CSP.
+>
+> Content Security Policy: Els paràmetres de la pàgina han implicat la càrrega d'un recurs a data:application/x-font-ttf;charset=utf-… («font-src»). S'ha enviat un informe CSP.
+
+```c#
+.FontSources(s => s.Self().CustomSources("https://fonts.gstatic.com", "data:"))
+```
+
+No puedo corregir el problema:
+
+> Content Security Policy: Els paràmetres de la pàgina han implicat la càrrega d'un recurs a inline («script-src»). S'ha enviat un informe CSP.
+
+Ya que la consola no me proporciona el código sha256 que se usa en
+
+```c#
+.ScriptSources(s => s.Self().CustomSources("xxx"))
+```
+
+En el curso siguen apareciendo errores provocados por `script-src`. Se opta por pasar a `UseCsp`.
+
+Ahora simplemente no carga el script y la página no funciona.
+
+> Content Security Policy: Els paràmetres de la pàgina han blocat la càrrega d'un recurs a inline («script-src»).
+
