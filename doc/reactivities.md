@@ -13978,7 +13978,9 @@ facebookLogin = () => {
 }
 ```
 
-270 Redistribuir la aplicación a Heroku
+##### 270 Redistribuir la aplicación a Heroku
+
+Hay que borrar la carpeta ../API/wwwroot
 
 ```bash
 [joan@alkaid client-app]$ npm install rimraf --save-dev
@@ -14044,3 +14046,69 @@ Find out more about deployment here:
 > rimraf ../API/wwwroot && mv build ../API/wwwroot
 ```
 
+Se revisan las políticas de seguridad de contenidos en `Startup`.
+
+```c#
+app.UseCsp(opt => opt
+    .BlockAllMixedContent()
+    .StyleSources(s => s.Self().CustomSources(
+        "https://fonts.googleapis.com",
+        "sha256-oFySg82XYSNiSd+Q3yfYPD/rxY6RMDMJ0KxzGG74iGM="
+        ))
+    .FontSources(s => s.Self().CustomSources(
+        "https://fonts.gstatic.com", "data:"))
+    .FormActions(s => s.Self())
+    .FrameAncestors(s => s.Self())
+    .ImageSources(s => s.Self().CustomSources(
+        "https://res.cloudinary.com",
+        "https://www.facebook.com",
+        "https://platform-lookaside.fbsbx.com",
+        "data:"
+        ))
+    .ScriptSources(s => s.Self().CustomSources(
+        "https://connect.facebook.net",
+        "sha256-zq0rxF+NKFz/0gUNnCtGquWDQKCUpgBthxd6UGBRCzo=",
+        "sha256-MaOASONmzK1ZXxdI05yW7dB2tGOBfaXkEilKZU5cgWU="
+        ))
+);
+```
+
+Hay que usar `Chrome` para identificar los `hash`, hasta que en la consola no aparezca ningún error.
+
+```bash
+[joan@alkaid reactivities]$ git add .
+[joan@alkaid reactivities]$ git commit -m "FB login complete"
+[fbLogin f6d4667] FB login complete
+ 22 files changed, 701 insertions(+), 28 deletions(-)
+ rewrite API/wwwroot/index.html (81%)
+ rename API/wwwroot/static/js/{2.f3dbfefa.chunk.js => 2.48801eb5.chunk.js} (99%)
+ rename API/wwwroot/static/js/{2.f3dbfefa.chunk.js.LICENSE.txt => 2.48801eb5.chunk.js.LICENSE.txt} (100%)
+ create mode 100644 API/wwwroot/static/js/2.48801eb5.chunk.js.map
+ delete mode 100644 API/wwwroot/static/js/2.f3dbfefa.chunk.js.map
+ create mode 100644 API/wwwroot/static/js/main.2639f5fc.chunk.js
+ create mode 100644 API/wwwroot/static/js/main.2639f5fc.chunk.js.map
+ delete mode 100644 API/wwwroot/static/js/main.fe19a9b0.chunk.js
+ delete mode 100644 API/wwwroot/static/js/main.fe19a9b0.chunk.js.map
+ create mode 100644 doc/images/266.1.png
+ create mode 100644 doc/images/268.1.png
+[joan@alkaid reactivities]$ git push origin fbLogin
+S'estan enumerant els objectes: 65, fet.
+S'estan comptant els objectes: 100% (65/65), fet.
+Delta compression using up to 8 threads
+S'estan comprimint els objectes: 100% (34/34), fet.
+S'estan escrivint els objectes: 100% (36/36), 1.69 MiB | 2.26 MiB/s, fet.
+Total 36 (delta 22), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (22/22), completed with 22 local objects.
+remote: 
+remote: Create a pull request for 'fbLogin' on GitHub by visiting:
+remote:      https://github.com/jonogal/reactivities/pull/new/fbLogin
+remote: 
+To https://github.com/jonogal/reactivities.git
+ * [new branch]      fbLogin -> fbLogin
+```
+
+
+
+##### 271 Introducción a refrescar fichas
+
+##### 272 Añadir la entidad de dominio Refrescar ficha
