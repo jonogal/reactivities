@@ -13516,3 +13516,531 @@ Se define el despliegue automático al proteger la rama `main`.
 
 ##### 266 Añadir el SDK de Facebook JS
 
+https://developers.facebook.com/docs/facebook-login/web
+
+https://developers.facebook.com/docs/javascript/quickstart
+
+###### Basic Setup
+
+```html
+<script>
+  window.fbAsyncInit = function() {
+    FB.init({
+      appId            : 'your-app-id',
+      autoLogAppEvents : true,
+      xfbml            : true,
+      version          : 'v10.0'
+    });
+  };
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+```
+
+Se incluye este código en `index.html`.
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="Web site created using create-react-app"
+    />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <!--
+      manifest.json provides metadata used when your web app is installed on a
+      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
+    -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <!--
+      Notice the use of %PUBLIC_URL% in the tags above.
+      It will be replaced with the URL of the `public` folder during the build.
+      Only files inside the `public` folder can be referenced from the HTML.
+
+      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
+      work correctly both with client-side routing and a non-root public URL.
+      Learn how to configure a non-root public URL by running `npm run build`.
+    -->
+    <title>React App</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <script>
+      window.fbAsyncInit = function() {
+        FB.init({
+          appId            : '934424187354279',
+          autoLogAppEvents : true,
+          xfbml            : true,
+          version          : 'v10.0'
+        });
+      };
+    </script>
+    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+    <div id="root"></div>
+    <!--
+      This HTML file is a template.
+      If you open it directly in the browser, you will see an empty page.
+
+      You can add webfonts, meta tags, or analytics to this file.
+      The build step will place the bundled scripts into the <body> tag.
+
+      To begin the development, run `npm start` or `yarn start`.
+      To create a production bundle, use `npm run build` or `yarn build`.
+    -->
+  </body>
+</html>
+```
+
+```bash
+[joan@alkaid client-app]$ npm install @types/facebook-js-sdk --save-dev
+```
+
+En `agent.ts`:
+
+```tsx
+const Account = {
+    current: () => requests.get<User>('/account'),
+    login: (user: UserFormValues) => requests.post<User>('/account/login', user),
+    register: (user: UserFormValues) => requests.post<User>('/account/register', user),
+    fbLogin: (accessToken: string) => requests.post<User>(`/account/fbLogin?accessToken=${accessToken}`, {})
+}
+```
+
+En `userStore.ts`:
+
+```tsx
+facebookLogin = () => {
+    window.FB.login(response => {
+        console.log(response);
+    }, {scope: 'public_profile,email'})
+}
+```
+
+Se añade un botón en `HomePage`:
+
+```tsx
+import { observer } from 'mobx-react-lite';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { Button, Container, Divider, Header, Image, Segment } from 'semantic-ui-react';
+import { useStore } from '../../app/stores/store';
+import LoginForm from '../users/LoginForm';
+import RegisterForm from '../users/RegisterForm';
+
+export default observer(function HomePage() {
+    const { userStore, modalStore } = useStore();
+
+    return (
+        <Segment inverted textAlign='center' vertical className='masthead'>
+            <Container text>
+                <Header as='h1' inverted>
+                    <Image size='massive' src='/assets/logo.png' alt='logo' style={{ marginBottom: 12 }} />
+                    Reactivities
+                </Header>
+                {userStore.isLoggedIn ? (
+                    <>
+                        <Header as='h2' inverted content='Welcome to Reactivities' />
+                        <Button as={Link} to='/activities' size='huge' inverted>
+                            Go to Activities!
+                        </Button>
+                    </>
+                ) : (
+                    <>
+                        <Button onClick={() => modalStore.openModal(<LoginForm />)} size='huge' inverted>
+                            Login!
+                        </Button>
+                        <Button onClick={() => modalStore.openModal(<RegisterForm />)} size='huge' inverted>
+                            Register!
+                        </Button>
+                        <Divider horizontal inverted>Or</Divider>
+                        <Button
+                            size='huge'
+                            inverted
+                            color='facebook'
+                            content='Login with Facebook'
+                            onClick={() => userStore.facebookLogin()}
+                        />
+                    </>
+                )}
+
+            </Container>
+        </Segment >
+    )
+})
+```
+
+Hay que cambiar el usuario usando uno de los creados para las pruebas, en este caso Bárbara.
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/266.1.png)
+
+##### 267 Configurar el punto final de la API
+
+Se configura una nueva sección en `appsettings.json`.
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Warning",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  },
+  "AllowedHosts": "*",
+  "Cloudinary": {
+    "CloudName": "alkaidpmi",
+    "ApiKey": "649628228889621",
+    "ApiSecret": "8KGYdKdqsunAjNd0xWC5w-CP7IM"
+  },
+  "Facebook": {
+    "AppId": "934424187354279",
+    "AppSecret": "50bf064d7ddcbbe8b4c675dfce2fe5d0"
+  }
+}
+```
+
+En `AccountController` se crea el punto final `fbLogin`.
+
+```c#
+using System.Linq;
+using System.Net.Http;
+using System.Security.Claims;
+using System.Threading.Tasks;
+using API.DTOs;
+using API.Services;
+using Domain;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
+
+namespace API.Controllers
+{
+    [AllowAnonymous]
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AccountController : ControllerBase
+    {
+        private readonly UserManager<AppUser> _userManager;
+        private readonly SignInManager<AppUser> _signInManager;
+        private readonly TokenService _tokenService;
+        private readonly IConfiguration _config;
+        private readonly HttpClient _httpClient;
+        
+        public AccountController(UserManager<AppUser> userManager,
+            SignInManager<AppUser> signInManager, TokenService tokenService,
+            IConfiguration config)
+        {
+            _config = config;
+            _tokenService = tokenService;
+            _signInManager = signInManager;
+            _userManager = userManager;
+            _httpClient = new HttpClient
+            {
+                BaseAddress = new System.Uri("https://graph.facebook.com")
+            };
+        }
+
+    [HttpPost("login")]
+    public async Task<ActionResult<UserDto>> Login(LoginDto loginDto)
+    {
+        var user = await _userManager.Users.Include(p => p.Photos)
+            .FirstOrDefaultAsync(x => x.Email == loginDto.Email);
+
+        if (user == null) return Unauthorized();
+
+        var result = await _signInManager.CheckPasswordSignInAsync(user, loginDto.Password, false);
+
+        if (result.Succeeded)
+        {
+            return CreateUserObject(user);
+        }
+
+        return Unauthorized();
+    }
+
+    [HttpPost("register")]
+    public async Task<ActionResult<UserDto>> Register(RegisterDto registerDto)
+    {
+        if (await _userManager.Users.AnyAsync(u => u.Email == registerDto.Email))
+        {
+            ModelState.AddModelError("email", "Email taken");
+            return ValidationProblem(ModelState);
+        }
+
+        if (await _userManager.Users.AnyAsync(u => u.UserName == registerDto.Username))
+        {
+            ModelState.AddModelError("username", "Username taken");
+            return ValidationProblem(ModelState);
+        }
+
+        var user = new AppUser
+        {
+            DisplayName = registerDto.DisplayName,
+            Email = registerDto.Email,
+            UserName = registerDto.Username
+        };
+
+        var result = await _userManager.CreateAsync(user, registerDto.Password);
+
+        if (result.Succeeded)
+        {
+            return CreateUserObject(user);
+        }
+
+        return BadRequest("Problem registering user");
+    }
+
+    [Authorize]
+    [HttpGet]
+    public async Task<ActionResult<UserDto>> GetCurrentUser()
+    {
+        var user = await _userManager.Users.Include(p => p.Photos)
+            .FirstOrDefaultAsync(x => x.Email == User.FindFirstValue(ClaimTypes.Email));
+
+        return CreateUserObject(user);
+    }
+
+    [HttpPost("fbLogin")]
+    public async Task<ActionResult<UserDto>> FacebookLogin(string accessToken)
+    {
+        var fbVerifyKeys = _config["Facebook:AppId"] + "|" + _config["Facebook:AppSecret"];
+
+        var verifyToken = await _httpClient
+            .GetAsync($"debug_token??input_token={accessToken}&access_token={fbVerifyKeys}");
+
+        if (!verifyToken.IsSuccessStatusCode) return Unauthorized();
+
+        var fbUrl = $"me?access_token={accessToken}&fields=name,email,picture.width(100).height(100)";
+
+        var response = await _httpClient.GetAsync(fbUrl);
+
+        if (!response.IsSuccessStatusCode) return Unauthorized();
+
+        var content = await response.Content.ReadAsStringAsync();
+
+        var fbInfo = JsonConvert.DeserializeObject<dynamic>(content);
+
+        return new UserDto();
+
+    }
+
+    private UserDto CreateUserObject(AppUser user)
+    {
+        return new UserDto
+        {
+            DisplayName = user.DisplayName,
+            Image = user?.Photos?.FirstOrDefault(x => x.IsMain)?.Url,
+            Token = _tokenService.CreateToken(user),
+            Username = user.UserName
+        };
+    }
+}
+}
+```
+
+##### 268 Depurar la información de Facebook
+
+Se realiza una deserialización dinámica.
+
+```c#
+[HttpPost("fbLogin")]
+public async Task<ActionResult<UserDto>> FacebookLogin(string accessToken)
+{
+    var fbVerifyKeys = _config["Facebook:AppId"] + "|" + _config["Facebook:AppSecret"];
+
+    var verifyToken = await _httpClient
+        .GetAsync($"debug_token?input_token={accessToken}&access_token={fbVerifyKeys}");
+
+    if (!verifyToken.IsSuccessStatusCode) return Unauthorized();
+
+    var fbUrl = $"me?access_token={accessToken}&fields=name,email,picture.width(100).height(100)";
+
+    var response = await _httpClient.GetAsync(fbUrl);
+
+    if (!response.IsSuccessStatusCode) return Unauthorized();
+
+    var fbInfo = JsonConvert.DeserializeObject<dynamic>(await response.Content.ReadAsStringAsync());
+
+    var username = (string)fbInfo.id;
+
+    var user = await _userManager.Users.Include(p => p.Photos)
+        .FirstOrDefaultAsync(x => x.UserName == username);
+
+    if (user != null) return CreateUserObject(user);
+
+    user = new AppUser
+    {
+        DisplayName = (string)fbInfo.name,
+        Email = (string)fbInfo.email,
+        UserName = (string)fbInfo.id,
+        Photos = new List<Photo>
+        {
+            new Photo
+            {
+                Id = "fb_" + (string)fbInfo.id,
+                Url = (string)fbInfo.picture.data.url,
+                IsMain = true
+            }
+        }
+    };
+
+    var result = await _userManager.CreateAsync(user);
+
+    if (!result.Succeeded) return BadRequest("Problem creating user account");
+
+    return CreateUserObject(user);
+}
+```
+
+En userStore.ts:
+```tsx
+facebookLogin = () => {
+    window.FB.login(response => {
+        agent.Account.fbLogin(response.authResponse.accessToken).then(user => console.log(user));
+    }, {scope: 'public_profile,email'})
+}
+```
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/268.1.png)
+
+Ahora se puede identificar al usuario en la aplicación.
+
+##### 269 Retoques finales al login a través de Facebook
+
+Se va a trabajar sobre una rama diferente de `main`: `fbLogin`.
+
+```bash
+[joan@alkaid client-app]$ cd ..
+[joan@alkaid reactivities]$ git checkout -b fbLogin
+S'ha canviat a la branca nova «fbLogin»
+```
+
+Se hacen una serie de ajustes en `userStore`.
+
+```tsx
+fbAccessToken: string | null = null;
+fbLoading = false;
+...
+getFacebookLoginStatus = async () => {
+    if 
+    window.FB.getLoginStatus(response => {
+        if (response.status === 'connected') {
+            this.fbAccessToken = response.authResponse.accessToken;
+        }
+    })
+}
+```
+
+En `App.tsx`:
+
+```tsx
+useEffect(() => {
+  if (commonStore.token) {
+    userStore.getUser().finally(() => commonStore.setAppLoaded());
+  } else {
+    userStore.getFacebookLoginStatus().then(() => commonStore.setAppLoaded());
+  }
+}, [commonStore, userStore])
+```
+
+Se ajusta en `useStore`:
+
+```tsx
+facebookLogin = () => {
+    this.fbLoading = true;
+    const apiLogin = (accessToken: string) => {
+        agent.Account.fbLogin(accessToken).then(user => {
+            store.commonStore.setToken(user.token);
+            runInAction(() => {
+                this.user = user;
+                this.fbLoading = false;
+            })
+            history.push('/activities');
+        }).catch(error => {
+            console.log(error);
+        runInAction(() => this.fbLoading = false);
+        })
+    }
+    if (this.fbAccessToken) {
+        apiLogin(this.fbAccessToken);
+    } else {
+    window.FB.login(response => {
+            apiLogin(response.authResponse.accessToken);
+        }, {scope: 'public_profile,email'})
+    }
+}
+```
+
+270 Redistribuir la aplicación a Heroku
+
+```bash
+[joan@alkaid client-app]$ npm install rimraf --save-dev
+
+up to date, audited 2049 packages in 4s
+
+137 packages are looking for funding
+  run `npm fund` for details
+
+3 vulnerabilities (1 moderate, 2 high)
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+```
+
+package.json
+
+```json
+"scripts": {
+  "start": "react-scripts start",
+  "build": "react-scripts build",
+  "postbuild": "rimraf ../API/wwwroot && mv build ../API/wwwroot",
+  "test": "react-scripts test",
+  "eject": "react-scripts eject"
+},
+```
+
+```bash
+[joan@alkaid client-app]$ npm run build
+
+> client-app@0.1.0 build
+> react-scripts build
+
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  254.25 KB  build/static/js/2.48801eb5.chunk.js
+  100.2 KB   build/static/css/2.07b045a9.chunk.css
+  11.86 KB   build/static/js/main.2639f5fc.chunk.js
+  1.6 KB     build/static/js/3.d242d979.chunk.js
+  1.17 KB    build/static/js/runtime-main.10107bb6.js
+  373 B      build/static/css/main.b8eff46c.chunk.css
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+
+> client-app@0.1.0 postbuild
+> rimraf ../API/wwwroot && mv build ../API/wwwroot
+```
+
