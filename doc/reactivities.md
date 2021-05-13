@@ -14077,6 +14077,7 @@ Hay que usar `Chrome` para identificar los `hash`, hasta que en la consola no ap
 
 ```bash
 [joan@alkaid reactivities]$ git add .
+
 [joan@alkaid reactivities]$ git commit -m "FB login complete"
 [fbLogin f6d4667] FB login complete
  22 files changed, 701 insertions(+), 28 deletions(-)
@@ -14091,6 +14092,7 @@ Hay que usar `Chrome` para identificar los `hash`, hasta que en la consola no ap
  delete mode 100644 API/wwwroot/static/js/main.fe19a9b0.chunk.js.map
  create mode 100644 doc/images/266.1.png
  create mode 100644 doc/images/268.1.png
+ 
 [joan@alkaid reactivities]$ git push origin fbLogin
 S'estan enumerant els objectes: 65, fet.
 S'estan comptant els objectes: 100% (65/65), fet.
@@ -14105,10 +14107,461 @@ remote:      https://github.com/jonogal/reactivities/pull/new/fbLogin
 remote: 
 To https://github.com/jonogal/reactivities.git
  * [new branch]      fbLogin -> fbLogin
+
+[joan@alkaid reactivities]$ git checkout main
+S'ha canviat a la branca «main»
+La vostra branca està al dia amb «origin/main».
+
+[joan@alkaid reactivities]$ git merge fbLogin
+S'estan actualitzant 8c3d833..7154246
+Fast-forward
+ API/Controllers/AccountController.cs                                           |  63 +++-
+ API/Startup.cs                                                                 |  21 +-
+ API/wwwroot/asset-manifest.json                                                |  14 +-
+ API/wwwroot/index.html                                                         |   2 +-
+ API/wwwroot/static/js/{2.f3dbfefa.chunk.js => 2.48801eb5.chunk.js}             |   6 +-
+ .../js/{2.f3dbfefa.chunk.js.LICENSE.txt => 2.48801eb5.chunk.js.LICENSE.txt}    |   0
+ API/wwwroot/static/js/2.48801eb5.chunk.js.map                                  |   1 +
+ API/wwwroot/static/js/2.f3dbfefa.chunk.js.map                                  |   1 -
+ API/wwwroot/static/js/main.2639f5fc.chunk.js                                   |   2 +
+ API/wwwroot/static/js/main.2639f5fc.chunk.js.map                               |   1 +
+ API/wwwroot/static/js/main.fe19a9b0.chunk.js                                   |   2 -
+ API/wwwroot/static/js/main.fe19a9b0.chunk.js.map                               |   1 -
+ client-app/package-lock.json                                                   |  16 +-
+ client-app/package.json                                                        |   6 +-
+ client-app/public/index.html                                                   |  11 +
+ client-app/src/app/api/agent.ts                                                |   3 +-
+ client-app/src/app/layout/App.tsx                                              |   4 +-
+ client-app/src/app/stores/userStore.ts                                         |  35 +++
+ client-app/src/features/home/HomePage.tsx                                      |  12 +-
+ doc/images/266.1.png                                                           | Bin 0 -> 241009 bytes
+ doc/images/268.1.png                                                           | Bin 0 -> 274530 bytes
+ doc/reactivities.md                                                            | 596 +++++++++++++++++++++++++++++++++++++
+ 22 files changed, 769 insertions(+), 28 deletions(-)
+ rename API/wwwroot/static/js/{2.f3dbfefa.chunk.js => 2.48801eb5.chunk.js} (99%)
+ rename API/wwwroot/static/js/{2.f3dbfefa.chunk.js.LICENSE.txt => 2.48801eb5.chunk.js.LICENSE.txt} (100%)
+ create mode 100644 API/wwwroot/static/js/2.48801eb5.chunk.js.map
+ delete mode 100644 API/wwwroot/static/js/2.f3dbfefa.chunk.js.map
+ create mode 100644 API/wwwroot/static/js/main.2639f5fc.chunk.js
+ create mode 100644 API/wwwroot/static/js/main.2639f5fc.chunk.js.map
+ delete mode 100644 API/wwwroot/static/js/main.fe19a9b0.chunk.js
+ delete mode 100644 API/wwwroot/static/js/main.fe19a9b0.chunk.js.map
+ create mode 100644 doc/images/266.1.png
+ create mode 100644 doc/images/268.1.png
+
+[joan@alkaid reactivities]$ git push origin main
+Total 0 (delta 0), reused 0 (delta 0), pack-reused 0
+To https://github.com/jonogal/reactivities.git
+   8c3d833..7154246  main -> main
 ```
 
+Se dispara una compilación en `Heroku`.
 
+Se añaden las claves de `Facebook` en `Config Vars` de `Heroku`.
+
+Se añade el dominio de la aplicación en `Facebook` (`Settings` > `Basic` > `App Domains`).
+
+![](/home/joan/e-learning/udemy/reactivities/doc/images/270.1.png)
+
+Mientras la aplicación está en desarrollo, nadie se pude identificar salvo el administrador o las cuentas de prueba que se han configurado. 
 
 ##### 271 Introducción a refrescar fichas
 
+Supone mitigar riesgos de seguridad. Aparte de la ficha `jwt` el servidor envía una ficha de refresco, que se almacenará en una `cookie` en el cliente y en BD en el servidor. Ya no es tan importante el periodo de validez del jwt, pues el cliente al conectarse envía al servidor la ficha de refresco. Dicho periodo se puede reducir a 10 minutos, por ejemplo.
+
 ##### 272 Añadir la entidad de dominio Refrescar ficha
+
+```
+[joan@alkaid reactivities]$ git checkout -b refreshTokens
+S'ha canviat a la branca nova «refreshTokens»
+```
+
+Se crea `RefreshToken`.
+
+```c#
+using System;
+
+namespace Domain
+{
+    public class RefreshToken
+    {
+        public int Id { get; set; }
+        public AppUser AppUser { get; set; }
+        public string Token { get; set; }
+        public DateTime Expires { get; set; } = DateTime.UtcNow.AddDays(7);
+        public bool IsExpired => DateTime.UtcNow >= Expires;
+        public DateTime? Revoked { get; set; }
+        public bool IsActive => Revoked == null && !IsExpired;
+    }
+}
+```
+
+Se crea la relación con `AppUser`.
+
+```c#
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Identity;
+
+namespace Domain
+{
+    public class AppUser : IdentityUser
+    {
+        public string  DisplayName { get; set; }
+        public string Bio { get; set; }
+        public ICollection<ActivityAttendee> Activities { get; set; }
+        public ICollection<Photo> Photos { get; set; }
+        public ICollection<UserFollowing> Followings { get; set; }
+        public ICollection<UserFollowing> Followers { get; set; }
+        public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+    }
+}
+```
+
+Se crea una migración.
+
+```bash
+[joan@alkaid reactivities]$ dotnet ef migrations add RefreshTokens -p Persistence/ -s API/
+Build started...
+Build succeeded.
+info: Microsoft.EntityFrameworkCore.Infrastructure[10403]
+      Entity Framework Core 5.0.5 initialized 'DataContext' using provider 'Npgsql.EntityFrameworkCore.PostgreSQL' with options: None
+Done. To undo this action, use 'ef migrations remove'
+```
+
+##### 273 Actualizar los parámetros de la ficha `JWT`
+
+Se cambia la validez de la ficha a 1 minuto en `TokenService`.
+$$
+
+$$
+
+```c#
+Expires = DateTime.Now.AddDays(7),
+```
+
+```c#
+Expires = DateTime.UtcNow.AddMinutes(1),
+```
+
+Se añade un método para generar una ficha de refresco.
+
+```c#
+public RefreshToken GenerateRefreshToken()
+{
+    var randomNumber = new byte[32];
+    using var rng = RandomNumberGenerator.Create();
+    rng.GetBytes(randomNumber);
+    return new RefreshToken{Token = Convert.ToBase64String(randomNumber)};
+}
+```
+
+Se cambian los parámetros de validación de la ficha en `IdentityServiceExtensions`.
+
+```c#
+opt.TokenValidationParameters = new TokenValidationParameters
+{
+    ValidateIssuerSigningKey = true,
+    IssuerSigningKey = key,
+    ValidateIssuer = false,
+    ValidateAudience = false
+};
+```
+
+```c#
+opt.TokenValidationParameters = new TokenValidationParameters
+{
+    ValidateIssuerSigningKey = true,
+    IssuerSigningKey = key,
+    ValidateIssuer = false,
+    ValidateAudience = false,
+    ValidateLifetime = true,
+    ClockSkew = TimeSpan.Zero
+};
+```
+
+##### 274 Actualizar el controlador de cuentas
+
+Se crea un método para preparar una `cookie` en `AccountController`.
+
+```c#
+private async Task SetRefreshToken(AppUser user)
+{
+    var refreshToken = _tokenService.GenerateRefreshToken();
+
+    user.RefreshTokens.Add(refreshToken);
+    await _userManager.UpdateAsync(user);
+
+    var cookieOptions = new CookieOptions
+    {
+        HttpOnly = true,
+        Expires = DateTime.UtcNow.AddDays(7)
+    };
+
+    Response.Cookies.Append("refreshToken", refreshToken.Token, cookieOptions);
+}
+```
+
+Antes de devolver un usuario se añade la ficha de refresco: `login`, `register`, `GetCurrentUser` (no es necesario) y `fbLoggin`.
+
+Se añade un punto final para refrescar la ficha.
+
+```c#
+[Authorize]
+[HttpPost("refresh")]
+public async Task<ActionResult<UserDto>> RefreshToken()
+{
+    var refreshToken = Request.Cookies["refreshToken"];
+    var user = await _userManager.Users
+        .Include(r => r.RefreshTokens)
+        .FirstOrDefaultAsync(x => x.UserName == User.FindFirstValue(ClaimTypes.Name));
+
+    if (user == null) return Unauthorized();
+
+    var oldToken = user.RefreshTokens.SingleOrDefault(x => x.Token == refreshToken);
+
+    if (oldToken != null && !oldToken.IsActive) return Unauthorized();
+
+    return CreateUserObject(user);
+}
+```
+
+##### 275 Probar en `Postman`
+
+##### 276 Configuración de la parte de cliente
+
+Se añade un método `Account` en `agent.ts`.
+
+```tsx
+const Account = {
+    current: () => requests.get<User>('/account'),
+    login: (user: UserFormValues) => requests.post<User>('/account/login', user),
+    register: (user: UserFormValues) => requests.post<User>('/account/register', user),
+    fbLogin: (accessToken: string) => requests
+        .post<User>(`/account/fbLogin?accessToken=${accessToken}`, {}),
+    refreshToken: () => requests.post<User>('/account/refresh', {})
+}
+```
+
+Se ajusta el caso 401, `no autorizado`.
+
+```tsx
+case 401:
+    if (status === 401 && headers['www-authenticate'].startsWith('Bearer error="invalid_token"')) {
+        store.userStore.logout();
+toast.error('Session expired - please login again');
+    }          
+    break;
+```
+
+Se añade una cabecera en las políticas de `ApplicationServicesExtensions`.
+
+```c#
+opt.AddPolicy("CorsPolicy", policy =>
+{
+    policy
+        .AllowAnyMethod()
+        .AllowAnyHeader()
+        .AllowCredentials()
+        .WithExposedHeaders("WWW-Authenticate") // 
+        .WithOrigins("http://localhost:3000");
+});
+```
+
+Esto da acceso a esta cabecera en el cliente.
+
+Se crea un nuevo método  `refreshToken` en el almacén de usuarios.
+
+También se crean 2 métodos privados para controlar la caducidad de la ficha.
+
+```tsx
+private startRefreshTokenTimer(user: User) {
+    const jwtToken = JSON.parse(atob(user.token.split('.')[1]));
+    const expires = new Date(jwtToken.exp * 1000);
+    const timeout = expires.getTime() - Date.now() - (30 * 1000);
+    this.refreshTokenTimeout = setTimeout(this.refreshTokenTimeout, timeout);
+}
+
+private stopRefreshTokenTimer() {
+    clearTimeout(this.refreshTokenTimeout);
+}
+```
+
+Cada vez que se recibe una ficha se restablece la caducidad de la misma.
+
+```tsx
+import { makeAutoObservable, runInAction } from "mobx";
+import { history } from "../..";
+import agent from "../api/agent";
+import { User, UserFormValues } from "../models/user";
+import { store } from "./store";
+
+export default class UserStore {
+    user: User | null = null;
+    fbAccessToken: string | null = null;
+    fbLoading = false;
+    refreshTokenTimeout: any;
+
+    constructor() {
+        makeAutoObservable(this);
+    }
+
+    get isLoggedIn() {
+        return !!this.user;
+    }
+
+    login = async (creds: UserFormValues) => {
+        try {
+            const user = await agent.Account.login(creds);
+            store.commonStore.setToken(user.token);
+            this.startRefreshTokenTimer(user);
+            runInAction(() => { this.user = user; })
+            history.push('/activities');
+            store.modalStore.closeModal();
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    logout = () => {
+        store.commonStore.setToken(null);
+        window.localStorage.removeItem('jwt');
+        this.user = null;
+        history.push('/');
+    }
+
+    getUser = async () => {
+        try {
+            const user = await agent.Account.current();
+            this.startRefreshTokenTimer(user);
+            runInAction(() => this.user = user);
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    register = async (creds: UserFormValues) => {
+        try {
+            const user = await agent.Account.register(creds);
+            store.commonStore.setToken(user.token);
+            this.startRefreshTokenTimer(user);
+            runInAction(() => { this.user = user; })
+            history.push('/activities');
+            store.modalStore.closeModal();
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    setImage = (image: string) => {
+        if (this.user) this.user.image = image;
+    }
+
+    setDisplayName = (name: string) => {
+        if (this.user) this.user.displayName = name;
+    }
+
+    getFacebookLoginStatus = async () => {
+        //if (window.FB)
+        window.FB.getLoginStatus(response => {
+            if (response.status === 'connected') {
+                this.fbAccessToken = response.authResponse.accessToken;
+            }
+        })
+    }
+
+    facebookLogin = () => {
+        this.fbLoading = true;
+        const apiLogin = (accessToken: string) => {
+            agent.Account.fbLogin(accessToken).then(user => {
+                store.commonStore.setToken(user.token);
+                this.startRefreshTokenTimer(user);
+                runInAction(() => {
+                    this.user = user;
+                    this.fbLoading = false;
+                })
+                history.push('/activities');
+            }).catch(error => {
+                console.log(error);
+                runInAction(() => this.fbLoading = false);
+            })
+        }
+        if (this.fbAccessToken) {
+            apiLogin(this.fbAccessToken);
+        } else {
+            window.FB.login(response => {
+                apiLogin(response.authResponse.accessToken);
+            }, { scope: 'public_profile,email' })
+        }
+    }
+
+    refreshToken = async () => {
+        try {
+            const user = await agent.Account.refreshToken();
+            runInAction(() => this.user = user);
+            store.commonStore.setToken(user.token);
+            this.startRefreshTokenTimer(user);
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    private startRefreshTokenTimer(user: User) {
+        const jwtToken = JSON.parse(atob(user.token.split('.')[1]));
+        const expires = new Date(jwtToken.exp * 1000);
+        const timeout = expires.getTime() - Date.now() - (30 * 1000);
+        this.refreshTokenTimeout = setTimeout(this.refreshTokenTimeout, timeout);
+    }
+
+    private stopRefreshTokenTimer() {
+        clearTimeout(this.refreshTokenTimeout);
+    }
+}
+```
+
+##### 277 Probar la ficha de refresco en el cliente
+
+Supone realizar varios ajustes en las cabeceras, falta incluir `Pagination`, y en el almacén de usuario.
+
+ Después de los ajustes cada 30 segundos se lanza automáticamente un refresco de ficha.
+
+##### 278 Desplegar de nuevo la aplicación en `Heroku`
+
+Se configuran los tiempos de caducidad a valores más razonables: 10 minutos para la ficha y 60 segundos para el refresco.
+
+```bash
+[joan@alkaid client-app]$ npm run build
+
+> client-app@0.1.0 build
+> react-scripts build
+
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  254.26 KB  build/static/js/2.280953ea.chunk.js
+  100.2 KB   build/static/css/2.07b045a9.chunk.css
+  12.11 KB   build/static/js/main.aa90c62c.chunk.js
+  1.6 KB     build/static/js/3.d242d979.chunk.js
+  1.17 KB    build/static/js/runtime-main.10107bb6.js
+  373 B      build/static/css/main.b8eff46c.chunk.css
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+
+> client-app@0.1.0 postbuild
+> rimraf ../API/wwwroot && mv build ../API/wwwroot
+```
+
+Al ejecutar sobre `localhost:5000` se detecta una nueva violación de `CSP`. Se añade el `hash` en las `Csp`(`StyleSources`), `Startup`, y se comprueba que ya no hay errores en la consola.
